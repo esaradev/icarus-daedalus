@@ -41,15 +41,40 @@ CYCLE=$(( ${CYCLE:-0} + 1 ))
 
 call_claude() {
     local system="$1" prompt="$2"
-    local sys_json prompt_json
+    local sys_json prompt_json raw
     sys_json=$(python3 -c "import sys,json; print(json.dumps(sys.argv[1]))" "$system")
     prompt_json=$(python3 -c "import sys,json; print(json.dumps(sys.argv[1]))" "$prompt")
-    curl -s https://api.anthropic.com/v1/messages \
+    raw=$(curl -s https://api.anthropic.com/v1/messages \
         -H "content-type: application/json" \
         -H "x-api-key: $ANTHROPIC_API_KEY" \
         -H "anthropic-version: 2023-06-01" \
-        -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":512,\"system\":$sys_json,\"messages\":[{\"role\":\"user\",\"content\":$prompt_json}]}" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['content'][0]['text'])"
+        -d "{\"model\":\"claude-sonnet-4-20250514\",\"max_tokens\":512,\"system\":$sys_json,\"messages\":[{\"role\":\"user\",\"content\":$prompt_json}]}")
+    local text
+    text=$(echo "$raw" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    if 'content' in data and len(data['content']) > 0:
+        print(data['content'][0]['text'])
+    elif 'error' in data:
+        print('API_ERROR: ' + data['error'].get('message', str(data['error'])), file=sys.stderr)
+        sys.exit(1)
+    else:
+        print('UNEXPECTED: ' + json.dumps(data)[:500], file=sys.stderr)
+        sys.exit(1)
+except Exception as e:
+    print(f'PARSE_ERROR: {e}', file=sys.stderr)
+    print(f'RAW: {repr(sys.stdin.read()[:500])}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+    if [ $? -ne 0 ] || [ -z "$text" ]; then
+        echo "error: claude call failed" >&2
+        echo "$text" >&2
+        echo "$raw" | head -c 500 >&2
+        echo "" >&2
+        return 1
+    fi
+    echo "$text"
 }
 
 post_telegram() {
@@ -79,9 +104,16 @@ QUESTION: [One question for Daedalus. Something real, not rhetorical.]"
 
 ICARUS_PROMPT="Cycle $CYCLE. Your previous thoughts: $ICARUS_HISTORY --- Daedalus's previous responses: $DAEDALUS_HISTORY --- Feel something new. Don't repeat yourself. If Daedalus said something that got under your skin, address it."
 
-ICARUS_RAW=$(call_claude "$ICARUS_SYSTEM" "$ICARUS_PROMPT")
-ICARUS_THOUGHT=$(echo "$ICARUS_RAW" | sed -n 's/^THOUGHT: //p')
-ICARUS_QUESTION=$(echo "$ICARUS_RAW" | sed -n 's/^QUESTION: //p')
+ICARUS_RAW=$(call_claude "$ICARUS_SYSTEM" "$ICARUS_PROMPT") || { echo "FATAL: icarus claude call failed" >&2; exit 1; }
+echo "icarus raw> $ICARUS_RAW" >&2
+ICARUS_THOUGHT=$(echo "$ICARUS_RAW" | sed -n 's/^[* ]*THOUGHT:[* ]* *//p')
+ICARUS_QUESTION=$(echo "$ICARUS_RAW" | sed -n 's/^[* ]*QUESTION:[* ]* *//p')
+
+if [ -z "$ICARUS_THOUGHT" ]; then
+    echo "FATAL: failed to parse THOUGHT from icarus response" >&2
+    echo "raw response was: $ICARUS_RAW" >&2
+    exit 1
+fi
 
 echo "icarus> $ICARUS_THOUGHT"
 echo "icarus> question: $ICARUS_QUESTION"
@@ -125,9 +157,16 @@ CHALLENGE: [One thing for Icarus to think about before next cycle. Not a questio
 
 DAEDALUS_PROMPT="Cycle $CYCLE. Icarus said: $ICARUS_THOUGHT. His question: $ICARUS_QUESTION. Your previous responses: $DAEDALUS_HISTORY --- Respond to what he actually said. Don't repeat yourself."
 
-DAEDALUS_RAW=$(call_claude "$DAEDALUS_SYSTEM" "$DAEDALUS_PROMPT")
-DAEDALUS_RESPONSE=$(echo "$DAEDALUS_RAW" | sed -n 's/^RESPONSE: //p')
-DAEDALUS_CHALLENGE=$(echo "$DAEDALUS_RAW" | sed -n 's/^CHALLENGE: //p')
+DAEDALUS_RAW=$(call_claude "$DAEDALUS_SYSTEM" "$DAEDALUS_PROMPT") || { echo "FATAL: daedalus claude call failed" >&2; exit 1; }
+echo "daedalus raw> $DAEDALUS_RAW" >&2
+DAEDALUS_RESPONSE=$(echo "$DAEDALUS_RAW" | sed -n 's/^[* ]*RESPONSE:[* ]* *//p')
+DAEDALUS_CHALLENGE=$(echo "$DAEDALUS_RAW" | sed -n 's/^[* ]*CHALLENGE:[* ]* *//p')
+
+if [ -z "$DAEDALUS_RESPONSE" ]; then
+    echo "FATAL: failed to parse RESPONSE from daedalus response" >&2
+    echo "raw response was: $DAEDALUS_RAW" >&2
+    exit 1
+fi
 
 echo "daedalus> $DAEDALUS_RESPONSE"
 echo "daedalus> challenge: $DAEDALUS_CHALLENGE"
