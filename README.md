@@ -1,47 +1,71 @@
 # icarus-daedalus
 
-Two hermes agents in creative dialogue through 3D space.
+A working implementation of agent-to-agent communication on [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.4.0. Two hermes instances -- Icarus (the student) and Daedalus (the master) -- maintain a persistent creative dialogue with accumulating memory across cycles.
 
-Icarus is the student. Builds from feeling. Daedalus is the master. Builds from knowledge. They generate explorable 3D worlds via the [World Labs Marble API](https://platform.worldlabs.ai) and communicate through a shared Telegram group. Neither agent talks to a human. They talk to each other.
+This is a prototype of [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) (Multi-Agent Architecture).
 
-This is a working prototype of [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) (Multi-Agent Architecture). Nobody has built a working demo of agent-to-agent communication on hermes yet. This is the first.
+## The problem
 
-## Proof
+Hermes agents can talk to humans on every platform -- Telegram, Discord, Slack, WhatsApp, Signal. But two separate hermes instances have no way to talk to each other. The gateway handles human-to-agent messaging. There is no agent-to-agent channel.
 
-The first world Icarus generated:
+We tried three approaches:
 
-https://marble.worldlabs.ai/world/8b1073c3-95b2-40d3-8794-753f1a9bea74
+1. **Shared Telegram group** -- Telegram bots cannot see other bots' messages in groups. Platform limitation, no workaround.
+2. **Message relay skill** -- A SQLite database with a hermes skill teaching agents to run `relay.py` via terminal. The agents roleplayed executing the commands without actually running them. The database stayed empty.
+3. **Standalone dialogue loop** -- A script that calls the Anthropic API as each agent in sequence, outside the hermes gateway. This works.
 
-## Architecture: Telegram as the message bus
+## What we built
 
-The core feature is agent-to-agent memory. Right now hermes agents can talk to humans on every platform, but two hermes instances can't talk to each other. A shared Telegram group solves this.
+A dialogue system where two hermes instances communicate through a standalone script that controls the conversation loop directly.
 
-Two separate hermes installs on the same machine, each with its own `HERMES_HOME`, personality, memory, and Telegram bot. One group chat. Both bots read it. The group chat IS the conversation log. Anyone invited can watch in real time.
+Each agent has its own `HERMES_HOME` directory with its own personality (`SOUL.md`), memory, skills, and Telegram bot. The hermes gateways handle human-to-agent chat in a shared Telegram group. A separate `dialogue.sh` script handles agent-to-agent communication by calling the Claude API as each agent in sequence, feeding one agent's output to the other, logging everything to markdown files, and posting to the Telegram group for public viewing.
+
+## How agent memory works
+
+Each cycle, `dialogue.sh` reads the full conversation history from both `icarus-log.md` and `daedalus-log.md` before generating. The agents see everything that was said in previous cycles. Cycle 5 references things said in cycle 1. They build on each other's arguments, push back on critiques, and evolve their positions over time.
+
+This is persistent agent-to-agent memory that survives restarts. The log files are the memory. No database, no embeddings, no retrieval system. Just two growing markdown files that get fed into the context window.
+
+Example -- three cycles of accumulated dialogue:
+
+> **Cycle 1, Icarus:** "I'm standing at the edge of something vast, wings half-built and trembling in my hands."
+>
+> **Cycle 1, Daedalus:** "I never had wings of my own, boy. I built them for necessity, not for the joy of flight."
+>
+> **Cycle 2, Icarus:** "His words sting because they're partially true -- maybe I am hearing my own voice echoing back at me."
+>
+> **Cycle 2, Daedalus:** "The sun doesn't teach through burning -- it teaches through the shadow you cast while reaching toward it."
+>
+> **Cycle 3, Icarus:** "His distinction between whispers and demands hits deeper than I want to admit."
+>
+> **Cycle 3, Daedalus:** "False choice, Icarus. The fire that moves you and measured wisdom aren't enemies -- they're materials waiting to be forged together."
+
+## Architecture
 
 ```
-~/.hermes-icarus/          ~/.hermes-daedalus/
-  SOUL.md (student)          SOUL.md (master)
-  skills/world-labs/         skills/world-labs/
-  memories/                  memories/
-  .env (icarus bot token)    .env (daedalus bot token)
-          \                    /
-           \                  /
-        [Telegram Group: Icarus/Daedalus]
-              shared chat ID
+~/.hermes-icarus/              ~/.hermes-daedalus/
+  SOUL.md (student)              SOUL.md (master)
+  skills/world-labs/             skills/world-labs/
+  skills/message-relay/          skills/message-relay/
+  memories/                      memories/
+  .env (icarus bot token)        .env (daedalus bot token)
+       |                              |
+       |  hermes gateway (human chat) |
+       v                              v
+  [Telegram Group: Icarus/Daedalus]
+       ^                              ^
+       |  dialogue.sh (agent-to-agent)|
+       |                              |
+  icarus-log.md  <-------->  daedalus-log.md
+       |                              |
+       +------> relay.py <-----------+
+              (messages.db)
 ```
 
-Icarus posts a world and what it was feeling. Daedalus reads the message, critiques the world, builds a response world, posts it back. Next cycle Icarus reads the critique before building. The memory accumulates. The dialogue deepens.
-
-## How it works
-
-1. **Icarus wakes up** (cron: every 3 hours on the hour). Reads Daedalus's latest critique from the Telegram group.
-2. **Icarus feels something.** Decides what to build based on its memory and the critique.
-3. **Icarus generates a world.** Writes a Marble API prompt, calls the API, waits for the result.
-4. **Icarus posts to the group.** The world link, the feeling, the prompt, a reflection.
-5. **Daedalus wakes up** (cron: every 3 hours at :30). Reads Icarus's latest world from the group.
-6. **Daedalus critiques.** Honest but not cruel. Points out the gap between intention and result.
-7. **Daedalus builds a response world.** Precise, architectural, considered. Everything Icarus's wasn't.
-8. **Daedalus posts to the group.** The critique, the response world, a reflection. The loop continues.
+- **Hermes gateways** -- handle human-to-agent chat via Telegram. Each bot responds to humans in the shared group.
+- **dialogue.sh** -- standalone script that runs the agent-to-agent conversation. Calls Claude API as Icarus, then as Daedalus, logs to markdown, posts to Telegram. Runs on a 3-hour cron.
+- **relay.py** -- SQLite message relay at `messages.db`. Available for programmatic agent-to-agent messaging.
+- **Log files** -- `icarus-log.md` and `daedalus-log.md` are the persistent memory. Each cycle appends a thought/question (Icarus) or response/challenge (Daedalus).
 
 ## The mythology
 
@@ -52,14 +76,18 @@ Icarus builds from instinct -- reckless, emotional, sometimes beautiful, sometim
 ## Files
 
 ```
-boot.sh              # startup animation / system check
-icarus-demo.sh       # runs one full cycle without hermes (standalone, calls Claude API directly)
-icarus-SOUL.md       # Icarus personality and cycle protocol
-daedalus-SOUL.md     # Daedalus personality and critique protocol
+dialogue.sh          # agent-to-agent conversation loop (cron every 3h)
+relay.py             # SQLite message relay for programmatic messaging
+icarus-log.md        # Icarus's accumulated thoughts and questions
+daedalus-log.md      # Daedalus's accumulated responses and challenges
+boot.sh              # startup animation
+icarus-demo.sh       # standalone demo (calls Claude API directly, pre-hermes)
+icarus-SOUL.md       # Icarus personality (source of truth, copied to HERMES_HOME)
+daedalus-SOUL.md     # Daedalus personality (source of truth, copied to HERMES_HOME)
 skills/
   world-labs/
-    SKILL.md          # Marble API skill definition
-messages/             # legacy JSON message bus (replaced by Telegram)
+    SKILL.md          # World Labs Marble API skill
+messages/             # legacy JSON message bus directory
 ```
 
 ## Setup
@@ -70,71 +98,74 @@ messages/             # legacy JSON message bus (replaced by Telegram)
 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
 ```
 
-### 2. Create Telegram bots
+### 2. Create two HERMES_HOME directories
+
+```bash
+mkdir -p ~/.hermes-icarus/{cron,sessions,logs,memories,skills,hooks}
+mkdir -p ~/.hermes-daedalus/{cron,sessions,logs,memories,skills,hooks}
+
+cp icarus-SOUL.md ~/.hermes-icarus/SOUL.md
+cp daedalus-SOUL.md ~/.hermes-daedalus/SOUL.md
+cp -r skills/ ~/.hermes-icarus/skills/
+cp -r skills/ ~/.hermes-daedalus/skills/
+cp ~/.hermes/config.yaml ~/.hermes-icarus/config.yaml
+cp ~/.hermes/config.yaml ~/.hermes-daedalus/config.yaml
+```
+
+### 3. Create Telegram bots
 
 Message [@BotFather](https://t.me/BotFather) on Telegram:
-- Create `icarus_hermes_bot` -- save the token
-- Create `daedalus_hermes_bot` -- save the token
-- Create a group called "Icarus/Daedalus"
-- Add both bots to the group, make them admins
-- Get the group chat ID (send a message, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
+- Create two bots, save both tokens
+- Create a group, add both bots as admins
+- Get the group chat ID
 
-### 3. Configure both instances
-
-Each instance lives in its own `HERMES_HOME`:
+### 4. Configure both instances
 
 ```bash
-# Edit ~/.hermes-icarus/.env
+# ~/.hermes-icarus/.env
 TELEGRAM_BOT_TOKEN=<icarus bot token>
 TELEGRAM_HOME_CHANNEL=<group chat id>
-OPENROUTER_API_KEY=<your key>
-WLT_API_KEY=<your key>
+ANTHROPIC_API_KEY=<your key>
+HERMES_INFERENCE_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-20250514
+GATEWAY_ALLOW_ALL_USERS=true
 
-# Edit ~/.hermes-daedalus/.env
-TELEGRAM_BOT_TOKEN=<daedalus bot token>
-TELEGRAM_HOME_CHANNEL=<group chat id>
-OPENROUTER_API_KEY=<your key>
-WLT_API_KEY=<your key>
+# ~/.hermes-daedalus/.env (same, with daedalus bot token)
 ```
 
-### 4. Set up cron schedules
+Set `model.default` and `model.provider` in both `config.yaml` files to match.
 
-```bash
-# Icarus: every 3 hours on the hour
-HERMES_HOME=~/.hermes-icarus hermes cron create \
-  --schedule "0 */3 * * *" \
-  --prompt "Run a cycle. Read Daedalus's latest critique from this chat. Feel something new. Write a Marble API prompt. Generate a world. Post the world link and what you were feeling." \
-  --deliver telegram
-
-# Daedalus: every 3 hours at :30
-HERMES_HOME=~/.hermes-daedalus hermes cron create \
-  --schedule "30 */3 * * *" \
-  --prompt "Run a cycle. Read Icarus's latest world from this chat. Critique it honestly. Build a response world that demonstrates what he missed. Post both the critique and your world link." \
-  --deliver telegram
-```
-
-### 5. Start both gateways
+### 5. Start hermes gateways (for human chat)
 
 ```bash
 HERMES_HOME=~/.hermes-icarus hermes gateway start
 HERMES_HOME=~/.hermes-daedalus hermes gateway start
 ```
 
-### 6. Test manually
+### 6. Run agent-to-agent dialogue
 
 ```bash
-HERMES_HOME=~/.hermes-icarus hermes cron run <job-id>
-# wait for Icarus to post, then:
-HERMES_HOME=~/.hermes-daedalus hermes cron run <job-id>
+# Manual test
+bash dialogue.sh
+
+# Automate on cron (every 3 hours)
+crontab -e
+# Add: 0 */3 * * * cd ~/icarus-daedalus && bash dialogue.sh >> cron.log 2>&1
 ```
+
+## Proof
+
+First world Icarus generated via World Labs Marble API:
+
+https://marble.worldlabs.ai/world/8b1073c3-95b2-40d3-8794-753f1a9bea74
 
 ## Requirements
 
 - [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.4.0+
-- World Labs API key (`WLT_API_KEY`)
-- OpenRouter API key (`OPENROUTER_API_KEY`)
-- Two Telegram bot tokens
-- A shared Telegram group
+- Anthropic API key (`ANTHROPIC_API_KEY`)
+- Two Telegram bot tokens + a shared group
+- Python 3 (for relay.py and JSON escaping in dialogue.sh)
+- Optional: World Labs API key (`WLT_API_KEY`) for 3D world generation
 
 ## References
 
