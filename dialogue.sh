@@ -16,9 +16,11 @@ TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
 # Load env from both hermes instances
 source_env() {
     local f="$1"
-    [ -f "$f" ] && while IFS='=' read -r k v; do
-        [[ "$k" =~ ^#.*$ || -z "$k" ]] && continue
-        export "$k"="$v"
+    [ -f "$f" ] && while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+        local k="${line%%=*}"
+        local v="${line#*=}"
+        [ -n "$k" ] && export "$k"="$v"
     done < "$f"
 }
 source_env "$HOME/.hermes-icarus/.env"
@@ -237,8 +239,13 @@ append_memory() {
     local memfile="$1" entry="$2"
     [ -f "$memfile" ] || printf "" > "$memfile"
     echo "$entry" >> "$memfile"
-    while [ "$(wc -c < "$memfile")" -gt 2000 ]; do
+    local size
+    size=$(wc -c < "$memfile" 2>/dev/null | tr -d ' ')
+    local tries=0
+    while [ "${size:-0}" -gt 2000 ] && [ "$tries" -lt 20 ]; do
         tail -n +5 "$memfile" > "$memfile.tmp" && mv "$memfile.tmp" "$memfile"
+        size=$(wc -c < "$memfile" 2>/dev/null | tr -d ' ')
+        tries=$((tries + 1))
     done
 }
 

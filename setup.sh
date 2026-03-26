@@ -37,11 +37,13 @@ else
     warn "hermes not installed."
     ask "install hermes-agent now? [Y/n] "
     read -r INSTALL_HERMES
-    if [[ "${INSTALL_HERMES,,}" == "n" ]]; then
+    if [ "$INSTALL_HERMES" = "n" ] || [ "$INSTALL_HERMES" = "N" ]; then
         fail "hermes is required. install from https://github.com/NousResearch/hermes-agent"
     fi
     info "installing hermes-agent..."
-    curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o /tmp/hermes-install.sh || fail "download failed. check your internet connection."
+    bash /tmp/hermes-install.sh || fail "hermes install failed. check output above."
+    rm -f /tmp/hermes-install.sh
     export PATH="$HOME/.local/bin:$PATH"
     command -v hermes &>/dev/null || fail "hermes install failed. check output above."
     ok "hermes installed"
@@ -164,14 +166,17 @@ if $USE_TELEGRAM; then
     echo ""
     ask "$AGENT_A_NAME bot token: "
     read -r TG_TOKEN_A
+    TG_TOKEN_A=$(echo "$TG_TOKEN_A" | tr -d ' ')
     [ -z "$TG_TOKEN_A" ] && fail "bot token required"
 
     ask "$AGENT_B_NAME bot token: "
     read -r TG_TOKEN_B
+    TG_TOKEN_B=$(echo "$TG_TOKEN_B" | tr -d ' ')
     [ -z "$TG_TOKEN_B" ] && fail "bot token required"
 
     ask "group chat ID (negative number): "
     read -r TG_GROUP_ID
+    TG_GROUP_ID=$(echo "$TG_GROUP_ID" | tr -d ' ')
     [ -z "$TG_GROUP_ID" ] && fail "group chat ID required"
 fi
 
@@ -305,7 +310,7 @@ echo ""
 ask "run a test dialogue cycle? [Y/n] "
 read -r RUN_TEST
 
-if [[ "${RUN_TEST,,}" != "n" ]]; then
+if [ "$RUN_TEST" != "n" ] && [ "$RUN_TEST" != "N" ]; then
     info "running test cycle..."
 
     if [ "$DIALOGUE_TEMPLATE" == "creative" ] || [ "$DIALOGUE_TEMPLATE" == "custom" ]; then
@@ -342,8 +347,8 @@ echo ""
 ask "set up automated dialogue every 3 hours? [y/N] "
 read -r SETUP_CRON
 
-if [[ "${SETUP_CRON,,}" == "y" ]]; then
-    CRON_CMD="0 */3 * * * cd $SCRIPT_DIR && bash dialogue.sh >> cron.log 2>&1"
+if [ "$SETUP_CRON" = "y" ] || [ "$SETUP_CRON" = "Y" ]; then
+    CRON_CMD="0 */3 * * * cd \"$SCRIPT_DIR\" && bash dialogue.sh >> cron.log 2>&1"
     (crontab -l 2>/dev/null | grep -v "icarus-daedalus"; echo "$CRON_CMD") | crontab -
     ok "cron job added: every 3 hours"
 fi

@@ -174,10 +174,13 @@ append_memory() {
     local memfile="$1" entry="$2"
     [ -f "$memfile" ] || printf "" > "$memfile"
     echo "$entry" >> "$memfile"
-    # Trim to ~2000 chars (leave room for hermes overhead)
-    while [ "$(wc -c < "$memfile")" -gt 2000 ]; do
-        # Remove the first non-empty block (oldest entry)
+    local size
+    size=$(wc -c < "$memfile" 2>/dev/null | tr -d ' ')
+    local tries=0
+    while [ "${size:-0}" -gt 2000 ] && [ "$tries" -lt 20 ]; do
         tail -n +5 "$memfile" > "$memfile.tmp" && mv "$memfile.tmp" "$memfile"
+        size=$(wc -c < "$memfile" 2>/dev/null | tr -d ' ')
+        tries=$((tries + 1))
     done
 }
 

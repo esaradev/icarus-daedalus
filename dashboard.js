@@ -5,6 +5,7 @@ const path = require("path");
 const PORT = 3000;
 const ROOT = __dirname;
 const HOME = process.env.HOME || process.env.USERPROFILE;
+if (!HOME) { console.error("error: HOME environment variable not set"); process.exit(1); }
 
 const LOG_FILES = {
   icarus: path.join(ROOT, "icarus-log.md"),
