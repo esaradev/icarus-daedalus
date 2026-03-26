@@ -1,8 +1,18 @@
 # icarus-daedalus
 
-A working implementation of agent-to-agent communication on [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.4.0. Two hermes instances -- Icarus (the student) and Daedalus (the master) -- maintain a persistent creative dialogue with accumulating memory across cycles.
+Two-agent loop with persistent memory. Pairs Claude agents that challenge each other across cycles, posting to Telegram and Slack. Templates for code review, research validation, and trading strategy.
 
-This is a prototype of [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) (Multi-Agent Architecture).
+Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.4.0. Prototype of [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) (Multi-Agent Architecture).
+
+## Quick start
+
+```bash
+git clone https://github.com/esaradev/icarus-daedalus.git
+cd icarus-daedalus
+bash setup.sh
+```
+
+The wizard walks you through everything: installs hermes if needed, picks a template, sets up Telegram/Slack, creates both agent instances, runs a test cycle, and optionally sets up a cron job. Five minutes to two agents talking.
 
 ## The problem
 
@@ -76,92 +86,33 @@ Icarus builds from instinct -- reckless, emotional, sometimes beautiful, sometim
 ## Files
 
 ```
+setup.sh             # one-command setup wizard
 dialogue.sh          # agent-to-agent conversation loop (cron every 3h)
 relay.py             # SQLite message relay for programmatic messaging
 icarus-log.md        # Icarus's accumulated thoughts and questions
 daedalus-log.md      # Daedalus's accumulated responses and challenges
-boot.sh              # startup animation
-icarus-demo.sh       # standalone demo (calls Claude API directly, pre-hermes)
 icarus-SOUL.md       # Icarus personality (source of truth, copied to HERMES_HOME)
 daedalus-SOUL.md     # Daedalus personality (source of truth, copied to HERMES_HOME)
+templates/
+  code-review/       # Icarus writes code, Daedalus reviews it
+  research-validation/ # Explorer + Validator agent pair
+  trading-strategy/  # Strategist + Risk Manager agent pair
 skills/
   world-labs/
     SKILL.md          # World Labs Marble API skill
-templates/
-  code-review/       # Architect + Reviewer agent pair
-  research-validation/ # Explorer + Validator agent pair
-  trading-strategy/  # Strategist + Risk Manager agent pair
-messages/             # legacy JSON message bus directory
 ```
 
-## Setup
+## Manual setup
 
-### 1. Install hermes-agent
+If you prefer to set things up yourself instead of using `setup.sh`:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
-```
-
-### 2. Create two HERMES_HOME directories
-
-```bash
-mkdir -p ~/.hermes-icarus/{cron,sessions,logs,memories,skills,hooks}
-mkdir -p ~/.hermes-daedalus/{cron,sessions,logs,memories,skills,hooks}
-
-cp icarus-SOUL.md ~/.hermes-icarus/SOUL.md
-cp daedalus-SOUL.md ~/.hermes-daedalus/SOUL.md
-cp -r skills/ ~/.hermes-icarus/skills/
-cp -r skills/ ~/.hermes-daedalus/skills/
-cp ~/.hermes/config.yaml ~/.hermes-icarus/config.yaml
-cp ~/.hermes/config.yaml ~/.hermes-daedalus/config.yaml
-```
-
-### 3. Create Telegram bots
-
-Message [@BotFather](https://t.me/BotFather) on Telegram:
-- Create two bots, save both tokens
-- Create a group, add both bots as admins
-- Get the group chat ID
-
-### 4. Configure both instances
-
-```bash
-# ~/.hermes-icarus/.env
-TELEGRAM_BOT_TOKEN=<icarus bot token>
-TELEGRAM_HOME_CHANNEL=<group chat id>
-ANTHROPIC_API_KEY=<your key>
-HERMES_INFERENCE_PROVIDER=anthropic
-LLM_MODEL=claude-sonnet-4-20250514
-GATEWAY_ALLOW_ALL_USERS=true
-
-# ~/.hermes-daedalus/.env (same, with daedalus bot token)
-```
-
-Set `model.default` and `model.provider` in both `config.yaml` files to match.
-
-### 5. Start hermes gateways (for human chat)
-
-```bash
-HERMES_HOME=~/.hermes-icarus hermes gateway start
-HERMES_HOME=~/.hermes-daedalus hermes gateway start
-```
-
-### 6. Run agent-to-agent dialogue
-
-```bash
-# Manual test
-bash dialogue.sh
-
-# Automate on cron (every 3 hours)
-crontab -e
-# Add: 0 */3 * * * cd ~/icarus-daedalus && bash dialogue.sh >> cron.log 2>&1
-```
-
-## Proof
-
-First world Icarus generated via World Labs Marble API:
-
-https://marble.worldlabs.ai/world/8b1073c3-95b2-40d3-8794-753f1a9bea74
+1. Install [hermes-agent](https://github.com/NousResearch/hermes-agent): `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash`
+2. Create two HERMES_HOME directories with subdirs: `cron`, `sessions`, `logs`, `memories`, `skills`, `hooks`
+3. Copy `SOUL.md` files to each instance
+4. Copy `config.yaml` from `~/.hermes/config.yaml` to both
+5. Create `.env` files with `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_HOME_CHANNEL`, `LLM_MODEL`
+6. Start gateways: `HERMES_HOME=~/.hermes-icarus hermes gateway run &`
+7. Run dialogue: `bash dialogue.sh`
 
 ## Slack integration (optional)
 
