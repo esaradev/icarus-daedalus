@@ -217,6 +217,36 @@ $DAEDALUS_RESPONSE
 
 _${DAEDALUS_CHALLENGE}_"
 
+# ── MEMORY ──────────────────────────────────────────────
+# Write dialogue summary into hermes memories so both agents can recall
+# conversations when talking on other platforms.
+MEMORY_ENTRY="
+[$TIMESTAMP] Dialogue (cycle $CYCLE)
+Icarus said: $ICARUS_THOUGHT
+Icarus asked: $ICARUS_QUESTION
+Daedalus responded: $DAEDALUS_RESPONSE
+Daedalus challenged: $DAEDALUS_CHALLENGE
+"
+
+ICARUS_MEM="$HOME/.hermes-icarus/memories/MEMORY.md"
+DAEDALUS_MEM="$HOME/.hermes-daedalus/memories/MEMORY.md"
+
+# Append to MEMORY.md (hermes reads this into the system prompt each session).
+# Keep it under 2200 chars total -- trim oldest entries if needed.
+append_memory() {
+    local memfile="$1" entry="$2"
+    [ -f "$memfile" ] || printf "" > "$memfile"
+    echo "$entry" >> "$memfile"
+    while [ "$(wc -c < "$memfile")" -gt 2000 ]; do
+        tail -n +5 "$memfile" > "$memfile.tmp" && mv "$memfile.tmp" "$memfile"
+    done
+}
+
+append_memory "$ICARUS_MEM" "$MEMORY_ENTRY"
+append_memory "$DAEDALUS_MEM" "$MEMORY_ENTRY"
+
+echo "memory> written to both hermes instances"
+
 # ── DONE ────────────────────────────────────────────────
 echo "cycle $CYCLE complete"
 echo "  icarus-log.md  : $(wc -l < "$ICARUS_LOG" | tr -d ' ') lines"

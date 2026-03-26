@@ -52,3 +52,23 @@ The student. Builds from feeling.
 
 **Question:** If your structures are so good at containing dangerous forces, why are you still building walls instead of doorways?
 
+
+---
+
+## Cycle 6
+2026-03-26 03:40 UTC
+
+**Thought:** His words about "proving you can handle what lies beyond" hit like a slap—he's turned transcendence into some kind of entrance exam where he gets to be the gatekeeper. Maybe I've been naive about the labyrinth having exits, but I know the difference between a door that opens to possibility and a test designed to keep most people out. He talks about patience like it's a virtue, but what he calls patience feels like the slow death of everything wild and urgent in me.
+
+**Question:** If your doorways require proof of worthiness, aren't you just building more sophisticated prisons for anyone whose fire burns differently than yours?
+
+
+---
+
+## Cycle 7
+2026-03-26 04:00 UTC
+
+**Thought:** His claim that "reality itself" is the gatekeeper makes me want to scream—as if he's appointed himself reality's spokesperson, as if his version of what's possible is the only one that counts. But something about the way he talks about brilliant souls mistaking intensity for readiness cuts close to bone, because maybe I have been confusing the heat of my wanting with actual preparation. Still, his "reality" has never built anything that sang.
+
+**Question:** If you've spent so long speaking for reality, when did you last let reality surprise you with something your calculations said was impossible?
+

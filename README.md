@@ -223,6 +223,44 @@ bash dialogue.sh "BTC consolidating at 65k, ETH/BTC ratio at 3-year low"
 
 All templates support `SLACK_WEBHOOK_URL` in `.env` for Slack posting.
 
+## Cross-platform memory
+
+Agents share persistent memory across platforms. Code review sessions on Slack are recallable when talking to the agents on Telegram, and vice versa.
+
+After each cycle, both `dialogue.sh` scripts write a structured summary to `$HERMES_HOME/memories/MEMORY.md` -- the file hermes injects into the system prompt at session start. Oldest entries rotate out when the file exceeds the 2200-char limit.
+
+### How it works
+
+1. **Code review cycle runs on Slack** via `templates/code-review/dialogue.sh`
+2. Script summarizes the session (what was coded, what was reviewed, outcome) using a Claude call
+3. Summary is appended to `~/.hermes-icarus/memories/MEMORY.md` and `~/.hermes-daedalus/memories/MEMORY.md`
+4. Next time someone messages Icarus on Telegram: "what code did you work on today?"
+5. Hermes loads MEMORY.md into the system prompt -- Icarus recalls the Slack coding session with specifics
+
+The main dialogue loop (`dialogue.sh` in project root) does the same thing in reverse -- philosophical conversations on Telegram get written to memory so coding sessions can reference them.
+
+### Example
+
+After a code review cycle where Icarus wrote a websocket pub/sub broker:
+
+```
+> You: what do you remember about coding sessions?
+> Icarus: I remember the most recent one. Cycle 4. I wrote a WebSocket pub/sub
+>   broker in Node. Channel subscriptions, message history. Daedalus tore it
+>   apart. Said my code was incomplete. Cut-off methods. Missing the core
+>   methods. He was right. Complete rewrite needed.
+```
+
+### Important
+
+Hermes caches agents in memory. After writing new entries to MEMORY.md, the gateway must be restarted for agents to see updated memory:
+
+```bash
+pkill -f "hermes gateway run"
+HERMES_HOME=~/.hermes-icarus hermes gateway run &
+HERMES_HOME=~/.hermes-daedalus hermes gateway run &
+```
+
 ## Requirements
 
 - [hermes-agent](https://github.com/NousResearch/hermes-agent) v0.4.0+

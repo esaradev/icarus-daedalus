@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# dialogue.sh -- Code review dialogue between Architect and Reviewer.
-# Architect proposes code. Reviewer critiques it. Both post to Slack.
+# dialogue.sh -- Code review loop between Icarus and Daedalus.
+# Icarus ships code fast. Daedalus reviews with precision. Both post to Slack.
 #
 # Usage: bash dialogue.sh [path-to-code-or-diff]
 # Env: ANTHROPIC_API_KEY, SLACK_WEBHOOK_URL (optional)
@@ -8,10 +8,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ARCHITECT_LOG="$SCRIPT_DIR/architect-log.md"
-REVIEWER_LOG="$SCRIPT_DIR/reviewer-log.md"
-ARCHITECT_SOUL="$SCRIPT_DIR/agent-a-SOUL.md"
-REVIEWER_SOUL="$SCRIPT_DIR/agent-b-SOUL.md"
+ICARUS_LOG="$SCRIPT_DIR/icarus-log.md"
+DAEDALUS_LOG="$SCRIPT_DIR/daedalus-log.md"
+ICARUS_SOUL="$SCRIPT_DIR/agent-a-SOUL.md"
+DAEDALUS_SOUL="$SCRIPT_DIR/agent-b-SOUL.md"
 TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
 
 # Load env from .env if present
@@ -30,10 +30,10 @@ elif [ -n "${1:-}" ]; then
 fi
 
 # Init logs
-[ -f "$ARCHITECT_LOG" ] || printf "# Architect Log\n\nCode proposals and iterations.\n\n" > "$ARCHITECT_LOG"
-[ -f "$REVIEWER_LOG" ] || printf "# Reviewer Log\n\nCode reviews and feedback.\n\n" > "$REVIEWER_LOG"
+[ -f "$ICARUS_LOG" ] || printf "# Code Log\n\n" > "$ICARUS_LOG"
+[ -f "$DAEDALUS_LOG" ] || printf "# Review Log\n\n" > "$DAEDALUS_LOG"
 
-CYCLE=$(grep -c '## Cycle' "$ARCHITECT_LOG" 2>/dev/null || true)
+CYCLE=$(grep -c '## Cycle' "$ICARUS_LOG" 2>/dev/null || true)
 CYCLE=$(( ${CYCLE:-0} + 1 ))
 
 call_claude() {
@@ -71,14 +71,14 @@ post_slack() {
         -d "{\"text\":$text_json}" > /dev/null
 }
 
-# ── ARCHITECT ──────────────────────────────────────────
+# ── ICARUS ─────────────────────────────────────────────
 echo "[$TIMESTAMP] cycle $CYCLE"
 echo ""
-echo "architect> writing code..."
+echo "icarus> writing code..."
 
-ARCHITECT_HISTORY=$(tail -80 "$ARCHITECT_LOG" 2>/dev/null)
-REVIEWER_HISTORY=$(tail -80 "$REVIEWER_LOG" 2>/dev/null)
-ARCHITECT_SOUL_TEXT=$(cat "$ARCHITECT_SOUL")
+ICARUS_HISTORY=$(tail -80 "$ICARUS_LOG" 2>/dev/null)
+DAEDALUS_HISTORY=$(tail -80 "$DAEDALUS_LOG" 2>/dev/null)
+ICARUS_SOUL_TEXT=$(cat "$ICARUS_SOUL")
 
 CONTEXT_BLOCK=""
 [ -n "$CODE_CONTEXT" ] && CONTEXT_BLOCK="Code/diff to work with:
@@ -86,85 +86,107 @@ $CODE_CONTEXT
 ---
 "
 
-ARCHITECT_SYSTEM="$ARCHITECT_SOUL_TEXT
+ICARUS_SYSTEM="$ICARUS_SOUL_TEXT"
 
-Respond with exactly two sections:
-PROPOSAL: [Your code or implementation. Explain every decision. If Reviewer flagged issues last cycle, address them explicitly.]
-QUESTION: [One question for Reviewer about a tradeoff you're unsure about.]"
+ICARUS_PROMPT="Cycle $CYCLE. ${CONTEXT_BLOCK}Your previous code: $ICARUS_HISTORY --- Previous review feedback: $DAEDALUS_HISTORY --- Write code for this task. If there is review feedback, output the corrected code. Output only code, no conversation."
 
-ARCHITECT_PROMPT="Cycle $CYCLE. ${CONTEXT_BLOCK}Your previous proposals: $ARCHITECT_HISTORY --- Reviewer's previous feedback: $REVIEWER_HISTORY --- Write something new or iterate on Reviewer's feedback. Don't repeat yourself."
+ICARUS_RAW=$(call_claude "$ICARUS_SYSTEM" "$ICARUS_PROMPT") || { echo "FATAL: icarus call failed" >&2; exit 1; }
 
-ARCHITECT_RAW=$(call_claude "$ARCHITECT_SYSTEM" "$ARCHITECT_PROMPT") || { echo "FATAL: architect call failed" >&2; exit 1; }
-ARCHITECT_PROPOSAL=$(echo "$ARCHITECT_RAW" | sed -n '/^[* ]*PROPOSAL:/,/^[* ]*QUESTION:/{ /^[* ]*QUESTION:/d; s/^[* ]*PROPOSAL:[* ]* *//; p; }')
-ARCHITECT_QUESTION=$(echo "$ARCHITECT_RAW" | sed -n 's/^[* ]*QUESTION:[* ]* *//p')
-
-[ -z "$ARCHITECT_PROPOSAL" ] && ARCHITECT_PROPOSAL="$ARCHITECT_RAW"
-
-echo "architect> proposal written"
+echo "icarus> code shipped"
 echo ""
 
-cat >> "$ARCHITECT_LOG" << EOF
+cat >> "$ICARUS_LOG" << EOF
 
 ---
 
 ## Cycle $CYCLE
 $TIMESTAMP
 
-**Proposal:** $ARCHITECT_PROPOSAL
-
-**Question:** $ARCHITECT_QUESTION
+$ICARUS_RAW
 
 EOF
 
-post_slack ":hammer_and_wrench: *Architect -- Cycle $CYCLE*
+post_slack "*Icarus -- Cycle $CYCLE*
 
-$ARCHITECT_PROPOSAL
+$ICARUS_RAW"
 
-_${ARCHITECT_QUESTION}_"
-
-# ── REVIEWER ───────────────────────────────────────────
-echo "reviewer> reading code..."
+# ── DAEDALUS ───────────────────────────────────────────
+echo "daedalus> reviewing..."
 sleep 2
 
-REVIEWER_SOUL_TEXT=$(cat "$REVIEWER_SOUL")
+DAEDALUS_SOUL_TEXT=$(cat "$DAEDALUS_SOUL")
 
-REVIEWER_SYSTEM="$REVIEWER_SOUL_TEXT
+DAEDALUS_SYSTEM="$DAEDALUS_SOUL_TEXT"
 
-Respond with exactly two sections:
-REVIEW: [Your review. Label each issue as BLOCKING, WARNING, or NIT. Reference previous cycles if relevant. Acknowledge good decisions.]
-VERDICT: [One sentence: APPROVE, REQUEST_CHANGES, or NEEDS_DISCUSSION, with a brief reason.]"
+DAEDALUS_PROMPT="Cycle $CYCLE. Code to review: $ICARUS_RAW --- Your previous reviews: $DAEDALUS_HISTORY --- Review this code. Output only your review and corrected code, no conversation."
 
-REVIEWER_PROMPT="Cycle $CYCLE. Architect proposed: $ARCHITECT_PROPOSAL. Their question: $ARCHITECT_QUESTION. Your previous reviews: $REVIEWER_HISTORY --- Review what they actually wrote. Don't repeat old feedback they already addressed."
+DAEDALUS_RAW=$(call_claude "$DAEDALUS_SYSTEM" "$DAEDALUS_PROMPT") || { echo "FATAL: daedalus call failed" >&2; exit 1; }
 
-REVIEWER_RAW=$(call_claude "$REVIEWER_SYSTEM" "$REVIEWER_PROMPT") || { echo "FATAL: reviewer call failed" >&2; exit 1; }
-REVIEWER_REVIEW=$(echo "$REVIEWER_RAW" | sed -n '/^[* ]*REVIEW:/,/^[* ]*VERDICT:/{ /^[* ]*VERDICT:/d; s/^[* ]*REVIEW:[* ]* *//; p; }')
-REVIEWER_VERDICT=$(echo "$REVIEWER_RAW" | sed -n 's/^[* ]*VERDICT:[* ]* *//p')
-
-[ -z "$REVIEWER_REVIEW" ] && REVIEWER_REVIEW="$REVIEWER_RAW"
-
-echo "reviewer> $REVIEWER_VERDICT"
+echo "daedalus> review done"
 echo ""
 
-cat >> "$REVIEWER_LOG" << EOF
+cat >> "$DAEDALUS_LOG" << EOF
 
 ---
 
 ## Cycle $CYCLE
-$TIMESTAMP -- reviewing Architect
+$TIMESTAMP
 
-**Review:** $REVIEWER_REVIEW
-
-**Verdict:** $REVIEWER_VERDICT
+$DAEDALUS_RAW
 
 EOF
 
-post_slack ":mag: *Reviewer -- Cycle $CYCLE*
+post_slack "*Daedalus -- Cycle $CYCLE*
 
-$REVIEWER_REVIEW
+$DAEDALUS_RAW"
 
-*Verdict: ${REVIEWER_VERDICT}*"
+# ── MEMORY ─────────────────────────────────────────────
+# Summarize this cycle into hermes memories so both agents can recall
+# coding sessions when talking on Telegram.
+SUMMARY_SYSTEM="You are a note-taker. Summarize a coding session in exactly 3 lines. No markdown. No code blocks. No preamble.
+Line 1: Icarus wrote: [one sentence describing what was coded]
+Line 2: Daedalus reviewed: [one sentence listing key issues found]
+Line 3: Outcome: [one sentence on what was approved or needs changing]"
+
+SUMMARY_PROMPT="Task: ${CODE_CONTEXT:-general coding}
+
+Icarus output:
+$(echo "$ICARUS_RAW" | head -30)
+
+Daedalus output:
+$(echo "$DAEDALUS_RAW" | head -30)
+
+Summarize in exactly 3 lines."
+
+SUMMARY=$(call_claude "$SUMMARY_SYSTEM" "$SUMMARY_PROMPT" 2>/dev/null) || SUMMARY="Icarus wrote code. Daedalus reviewed it."
+
+MEMORY_ENTRY="
+[$TIMESTAMP] Code session (cycle $CYCLE): ${CODE_CONTEXT:-general coding}
+$SUMMARY
+"
+
+ICARUS_MEM="$HOME/.hermes-icarus/memories/MEMORY.md"
+DAEDALUS_MEM="$HOME/.hermes-daedalus/memories/MEMORY.md"
+
+# Append to MEMORY.md (hermes reads this into the system prompt each session).
+# Keep it under 2200 chars total -- trim oldest entries if needed.
+append_memory() {
+    local memfile="$1" entry="$2"
+    [ -f "$memfile" ] || printf "" > "$memfile"
+    echo "$entry" >> "$memfile"
+    # Trim to ~2000 chars (leave room for hermes overhead)
+    while [ "$(wc -c < "$memfile")" -gt 2000 ]; do
+        # Remove the first non-empty block (oldest entry)
+        tail -n +5 "$memfile" > "$memfile.tmp" && mv "$memfile.tmp" "$memfile"
+    done
+}
+
+append_memory "$ICARUS_MEM" "$MEMORY_ENTRY"
+append_memory "$DAEDALUS_MEM" "$MEMORY_ENTRY"
+
+echo "memory> written to both hermes instances"
 
 # ── DONE ───────────────────────────────────────────────
 echo "cycle $CYCLE complete"
-echo "  architect-log.md: $(wc -l < "$ARCHITECT_LOG" | tr -d ' ') lines"
-echo "  reviewer-log.md : $(wc -l < "$REVIEWER_LOG" | tr -d ' ') lines"
+echo "  icarus-log.md  : $(wc -l < "$ICARUS_LOG" | tr -d ' ') lines"
+echo "  daedalus-log.md: $(wc -l < "$DAEDALUS_LOG" | tr -d ' ') lines"
