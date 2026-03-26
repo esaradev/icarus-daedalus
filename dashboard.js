@@ -126,7 +126,7 @@ const HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>icarus-daedalus</title>
+<title>Icarus / Daedalus</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -169,10 +169,16 @@ const HTML = `<!DOCTYPE html>
     color: var(--text-bright);
     letter-spacing: -0.02em;
   }
+  header .subtitle {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
   header .live {
     font-size: 11px;
     color: var(--text-dim);
     font-family: var(--mono);
+    margin-left: auto;
   }
   header .live::before {
     content: "";
@@ -410,18 +416,14 @@ const HTML = `<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>icarus-daedalus</h1>
+  <h1>Icarus / Daedalus</h1>
+  <span class="subtitle">two agents. persistent memory. every platform.</span>
   <span class="live" id="live">connected</span>
 </header>
 
 <div class="stats" id="stats"></div>
 
-<div class="tabs" id="tabs">
-  <div class="tab active" data-panel="dialogue">dialogue</div>
-  <div class="tab" data-panel="code">code review</div>
-  <div class="tab" data-panel="memory">memory</div>
-  <div class="tab" data-panel="worlds">worlds</div>
-</div>
+<div class="tabs" id="tabs"></div>
 
 <div class="panels active" id="panel-dialogue">
   <div class="panel" id="icarus-dialogue"></div>
@@ -445,15 +447,42 @@ const HTML = `<!DOCTYPE html>
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 
-// Tab switching
-$$(".tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    $$(".tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    $$(".panels").forEach(p => p.classList.remove("active"));
-    $(\`#panel-\${tab.dataset.panel}\`).classList.add("active");
+function switchTab(panel) {
+  $$(".tab").forEach(t => t.classList.remove("active"));
+  $(\`.tab[data-panel="\${panel}"]\`).classList.add("active");
+  $$(".panels").forEach(p => p.classList.remove("active"));
+  $(\`#panel-\${panel}\`).classList.add("active");
+}
+
+let currentTab = null;
+
+function renderTabs(data) {
+  const tabs = [];
+  if (data.totals.dialogueCycles > 0) tabs.push({ id: "dialogue", label: "dialogue" });
+  if (data.totals.codeCycles > 0) tabs.push({ id: "code", label: "code review" });
+  tabs.push({ id: "memory", label: "memory" });
+  if (data.worlds.length > 0) tabs.push({ id: "worlds", label: "worlds" });
+
+  // Default to first available tab
+  if (!currentTab || !tabs.find(t => t.id === currentTab)) {
+    currentTab = tabs[0].id;
+  }
+
+  $("#tabs").innerHTML = tabs
+    .map(t => \`<div class="tab \${t.id === currentTab ? "active" : ""}" data-panel="\${t.id}">\${t.label}</div>\`)
+    .join("");
+
+  $$(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      currentTab = tab.dataset.panel;
+      switchTab(currentTab);
+    });
   });
-});
+
+  // Show/hide panels
+  $$(".panels").forEach(p => p.classList.remove("active"));
+  $(\`#panel-\${currentTab}\`).classList.add("active");
+}
 
 function escHtml(s) {
   const d = document.createElement("div");
@@ -463,36 +492,52 @@ function escHtml(s) {
 
 function renderStats(data) {
   const t = data.totals;
-  const lastCycle = data.dialogue.icarus.length > 0
-    ? data.dialogue.icarus[data.dialogue.icarus.length - 1]
-    : null;
-  const lastTs = lastCycle ? lastCycle.timestamp : "none";
   const memPct = Math.round((t.memoryBytes / 4400) * 100);
+  const allCycles = [...data.dialogue.icarus, ...data.codeReview.icarus];
+  const lastCycle = allCycles.length > 0 ? allCycles[allCycles.length - 1] : null;
+  const lastTs = lastCycle ? lastCycle.timestamp : "none";
 
-  $("#stats").innerHTML = \`
-    <div class="stat">
-      <div class="stat-label">dialogue cycles</div>
+  let stats = [];
+
+  stats.push(\`<div class="stat">
+    <div class="stat-label">cycles</div>
+    <div class="stat-value">\${t.dialogueCycles + t.codeCycles}</div>
+    <div class="stat-detail">last: \${lastTs}</div>
+  </div>\`);
+
+  if (t.dialogueCycles > 0) {
+    stats.push(\`<div class="stat">
+      <div class="stat-label">dialogue</div>
       <div class="stat-value">\${t.dialogueCycles}</div>
-      <div class="stat-detail">last: \${lastTs}</div>
-    </div>
-    <div class="stat">
+    </div>\`);
+  }
+
+  if (t.codeCycles > 0) {
+    stats.push(\`<div class="stat">
       <div class="stat-label">code reviews</div>
       <div class="stat-value">\${t.codeCycles}</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">total messages</div>
-      <div class="stat-value">\${t.totalMessages}</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">memory</div>
-      <div class="stat-value">\${memPct}%</div>
-      <div class="stat-detail">\${t.memoryBytes} / 4400 bytes</div>
-    </div>
-    <div class="stat">
+    </div>\`);
+  }
+
+  stats.push(\`<div class="stat">
+    <div class="stat-label">messages</div>
+    <div class="stat-value">\${t.totalMessages}</div>
+  </div>\`);
+
+  stats.push(\`<div class="stat">
+    <div class="stat-label">memory</div>
+    <div class="stat-value">\${memPct}%</div>
+    <div class="stat-detail">\${t.memoryBytes} / 4400 bytes</div>
+  </div>\`);
+
+  if (data.worlds.length > 0) {
+    stats.push(\`<div class="stat">
       <div class="stat-label">worlds</div>
       <div class="stat-value">\${data.worlds.length}</div>
-    </div>
-  \`;
+    </div>\`);
+  }
+
+  $("#stats").innerHTML = stats.join("");
 }
 
 function renderDialogueCycle(c, agent) {
@@ -618,6 +663,7 @@ function renderWorlds(data) {
 }
 
 function render(data) {
+  renderTabs(data);
   renderStats(data);
   renderPanel(data.dialogue.icarus, $("#icarus-dialogue"), "icarus", renderDialogueCycle);
   renderPanel(data.dialogue.daedalus, $("#daedalus-dialogue"), "daedalus", renderDialogueCycle);

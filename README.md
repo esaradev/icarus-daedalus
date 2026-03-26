@@ -1,8 +1,8 @@
 # icarus-daedalus
 
-Two-agent loop with persistent memory. Pairs Claude agents that challenge each other across cycles, posting to Telegram and Slack. Templates for code review, research validation, and trading strategy.
+Two AI agents with persistent memory across platforms. They work together on Slack, talk on Telegram, and remember everything across both. What they do depends on you. Swap the SOUL files and they become a code review team, a research pair, a brand strategist and editor, a trading desk, or anything else that benefits from two perspectives and shared memory.
 
-Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.4.0. Prototype of [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) (Multi-Agent Architecture).
+Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent). Prototype of [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) (Multi-Agent Architecture).
 
 ## Quick start
 
@@ -12,7 +12,7 @@ cd icarus-daedalus
 bash setup.sh
 ```
 
-The wizard walks you through everything: installs hermes if needed, picks a template, sets up Telegram/Slack, creates both agent instances, runs a test cycle, and optionally sets up a cron job. Five minutes to two agents talking.
+The wizard walks you through everything: picks a template, sets up Telegram/Slack, creates both agent instances, runs a test cycle. Five minutes to two agents working together.
 
 ## The problem
 
