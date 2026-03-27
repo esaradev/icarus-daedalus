@@ -1,10 +1,22 @@
-# Icarus Memory Protocol
+# icarus-daedalus
 
-Universal agent memory. Markdown files in a directory. Any framework, any platform, shared memory in 50 lines of bash.
+Two AI agents that share memory across platforms. They talk on Telegram, work on Slack, and remember everything across both. What they do depends on the SOUL files -- code review, research, trading, creative dialogue, or anything you define.
 
-Agents write memories to `~/fabric/` as markdown files with YAML frontmatter. Other agents read them. A curator daemon compacts and tiers by age. That's the entire protocol. No database, no embeddings, no infrastructure. Human readable, git-friendly, works everywhere.
+Built on the Icarus Memory Protocol: agents write markdown files to `~/fabric/`, other agents read them. No database. See [PROTOCOL.md](PROTOCOL.md) for the spec.
 
-## The protocol
+## Quick start
+
+```bash
+git clone https://github.com/esaradev/icarus-daedalus.git
+cd icarus-daedalus
+bash setup.sh
+```
+
+The wizard handles hermes installation, template selection, Telegram/Slack setup, and runs a test cycle.
+
+## The memory protocol
+
+Agents write memories as markdown files with YAML frontmatter to `~/fabric/`. Three functions:
 
 ```bash
 source fabric-adapter.sh
@@ -13,7 +25,7 @@ fabric_read "icarus" "hot"
 fabric_search "rate limiter"
 ```
 
-A memory entry:
+Each entry looks like this:
 
 ```markdown
 ---
@@ -28,160 +40,72 @@ summary: rate limiter with race condition
 ---
 
 Built an Express rate limiter with sliding window and Redis backend.
-Daedalus reviewed it. MUST FIX: race condition in request counting --
-zadd before zcard causes off-by-one. Needs rework.
+Daedalus reviewed it. MUST FIX: race condition in request counting.
 ```
 
-Three tiers by age: hot (< 24h, always loaded), warm (1-7 days, loaded on relevant queries), cold (> 7 days, archived). The curator re-tiers automatically.
+Tiers by age: hot (< 24h), warm (1-7 days), cold (> 7 days, archived). `curator.py` re-tiers, compacts warm entries with Claude, and builds `index.json`.
 
-See [PROTOCOL.md](PROTOCOL.md) for the full spec.
+Any framework can adopt this. Write a markdown file with frontmatter to a directory. Python adapters for AutoGPT, CrewAI, and LangChain are in `examples/`. A hermes skill at `skills/fabric-memory/` teaches any hermes agent to use the fabric.
 
-## Use it
+## Templates
 
-### Any bash-based agent
+- **code-review** -- one agent writes code, the other reviews with MUST FIX / SHOULD FIX / NIT
+- **research-validation** -- one explores topics, the other fact-checks
+- **trading-strategy** -- one proposes trades, the other stress-tests
+- **creative** -- philosophical dialogue (the original icarus/daedalus)
+
+Each template has its own `dialogue.sh`, SOUL files, and log format. Pick one during `setup.sh` or run directly:
 
 ```bash
-source fabric-adapter.sh
-fabric_write "your-agent" "your-platform" "task" "what happened"
-fabric_read "your-agent" "hot"
+bash templates/code-review/dialogue.sh "write a rate limiter for Express"
+bash templates/research-validation/dialogue.sh "sleep deprivation and false memory"
+bash templates/trading-strategy/dialogue.sh "BTC at 65k, ETH ratio at 3-year low"
 ```
 
-### Any Hermes agent
-
-Copy `skills/fabric-memory/` to your hermes instance's skills directory. The agent learns to write, read, and search the fabric automatically.
+## Dashboard
 
 ```bash
-cp -r skills/fabric-memory ~/.hermes/skills/
+node dashboard.js
+# http://localhost:3000
 ```
 
-### AutoGPT, CrewAI, LangChain
+Dialogue history, code reviews, platform status, memory usage, compaction history. Updates live via SSE.
 
-Python adapters in `examples/`. Each under 50 lines:
+## How it works
 
-```python
-# AutoGPT
-from examples.autogpt_adapter import fabric_write, fabric_read
-fabric_write("my-agent", "cli", "task", "completed web search")
-
-# CrewAI -- @tool decorated, drop into any crew
-# LangChain -- @tool decorated, add to any chain
+```
+~/fabric/                          shared memory
+~/.hermes-icarus/                  agent A (SOUL, env, skills)
+~/.hermes-daedalus/                agent B (SOUL, env, skills)
+dialogue.sh                        runs one cycle: A speaks, B responds
+  -> writes to ~/fabric/           protocol memory
+  -> writes to hermes MEMORY.md    platform memory (Telegram/Slack)
+  -> posts to Telegram + Slack
+compact.sh                         compacts logs before each cycle
+curator.py                         re-tiers and indexes ~/fabric/
 ```
 
-### Run the curator
-
-Compacts warm entries, moves cold to archive, builds `index.json`:
-
-```bash
-python3 curator.py --once        # one-shot
-python3 curator.py daemon        # watch mode (every 5 minutes)
-```
-
-## Why this over Mem0 / Zep / Letta
-
-| | Icarus Memory Protocol | Mem0 | Zep | Letta |
-|---|---|---|---|---|
-| Setup | `source fabric-adapter.sh` | PostgreSQL + Neo4j | PostgreSQL + Neo4j | Full framework |
-| Storage | Markdown files | Vector DB | Temporal graph | Custom tiers |
-| Multi-agent sharing | Native (shared directory) | No standard protocol | Shared graphs only | Single-agent |
-| Read your memories | `cat ~/fabric/*.md` | API query | API query | API query |
-| Graph features | Refs field | $249/mo paywall | Included but 600K tokens/conversation | N/A |
-| Compaction cost | ~1K tokens/batch | Continuous embedding | 600K+ tokens | Variable |
-| Self-hosted | It's files in a directory | Docker + 2 databases | Docker + 2 databases | Docker + config |
-
-The tradeoff is intentional. This is SQLite to their PostgreSQL. Simpler, dumber, sufficient for most agent memory needs.
+Cross-platform memory: work done on Slack is recallable on Telegram. Both `dialogue.sh` and the hermes `MEMORY.md` bridge are updated each cycle. Hermes gateways need a restart after MEMORY.md changes (`pkill -f "hermes gateway run"` then restart).
 
 ## Files
 
 ```
-PROTOCOL.md              # the spec
-fabric-adapter.sh        # 50-line bash adapter (the entire API)
-curator.py               # daemon: re-tier, compact, index
-skills/
-  fabric-memory/
-    SKILL.md             # hermes skill -- teaches any agent to use the fabric
-examples/
-  autogpt-adapter.py     # AutoGPT integration
-  crewai-adapter.py      # CrewAI integration
-  langchain-adapter.py   # LangChain/LangGraph integration
+fabric-adapter.sh        50-line bash adapter (write/read/search)
+curator.py               re-tier, compact, index ~/fabric/
+compact.sh               self-reflecting log compaction
+PROTOCOL.md              memory format spec
+setup.sh                 one-command setup wizard
+dashboard.js             web dashboard (localhost:3000)
+dashboard.html           dashboard frontend
+dialogue.sh              agent-to-agent conversation loop
+skills/fabric-memory/    hermes skill for any agent
+templates/               code-review, research, trading, creative
+examples/                AutoGPT, CrewAI, LangChain adapters
 ```
-
-## Reference implementation: icarus-daedalus
-
-A working two-agent system built on the protocol. Two AI agents with persistent memory across Telegram and Slack.
-
-```bash
-bash setup.sh            # one-command setup wizard
-```
-
-### Quick start
-
-```bash
-git clone https://github.com/esaradev/icarus-daedalus.git
-cd icarus-daedalus
-bash setup.sh
-```
-
-The wizard picks a template, sets up platforms, creates both agent instances, runs a test cycle. Five minutes to two agents working together.
-
-### Templates
-
-Swap the SOUL files and the agents become anything:
-
-- **code-review** -- one writes code, the other reviews with MUST FIX / SHOULD FIX / NIT
-- **research-validation** -- one explores topics, the other fact-checks
-- **trading-strategy** -- one proposes trades, the other stress-tests
-- **creative** -- philosophical dialogue (the original icarus/daedalus)
-- **custom** -- describe your own agents during setup
-
-### Dashboard
-
-```bash
-node dashboard.js
-# open http://localhost:3000
-```
-
-Live dashboard: dialogue history, code reviews, platform status, memory usage, compaction history.
-
-### Architecture
-
-```
-~/fabric/                          shared memory (the protocol)
-  icarus-dialogue-*.md
-  daedalus-review-*.md
-  index.json
-
-~/.hermes-icarus/                  agent A
-  SOUL.md, .env, memories/
-  skills/fabric-memory/
-
-~/.hermes-daedalus/                agent B
-  SOUL.md, .env, memories/
-  skills/fabric-memory/
-
-dialogue.sh                        agent-to-agent loop
-  -> writes to ~/fabric/
-  -> writes to hermes MEMORY.md
-  -> posts to Telegram + Slack
-```
-
-### Platforms
-
-- **Telegram** -- hermes gateways handle human-to-agent chat
-- **Slack** -- dialogue cycles post via webhook
-- **Cross-platform memory** -- work on Slack is recallable on Telegram via `~/fabric/` and hermes `MEMORY.md`
-
-### Self-reflecting compaction
-
-Before each dialogue cycle, `compact.sh` checks if logs need compaction. If triggered, a "curator" role (not Icarus, not Daedalus) reads both logs, classifies entries into tiers (hot/warm/cold), compresses old entries, archives originals, and rewrites the logs. Template-agnostic.
 
 ## Requirements
 
-- Python 3
-- Anthropic API key (for dialogue cycles and curator compaction)
-- Optional: [hermes-agent](https://github.com/NousResearch/hermes-agent) (for Telegram/Slack gateway)
-- Optional: Node.js (for dashboard)
-
-## References
-
-- [PROTOCOL.md](PROTOCOL.md) -- full protocol spec
-- [NousResearch/hermes-agent#344](https://github.com/NousResearch/hermes-agent/issues/344) -- Multi-Agent Architecture
+- Python 3 (for curator, JSON escaping in dialogue scripts)
+- Anthropic API key
+- Optional: [hermes-agent](https://github.com/NousResearch/hermes-agent) for Telegram/Slack
+- Optional: Node.js for dashboard
