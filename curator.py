@@ -18,6 +18,7 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 HOT_HOURS = 24
 WARM_DAYS = 7
+FORCE_COLD_DAYS = 14  # move to cold even if compaction fails
 
 
 def parse_entry(filepath):
@@ -101,7 +102,9 @@ def compact_warm_entries(entries):
             t = e.get("tags", [])
             tags.update(t if isinstance(t, list) else [])
 
-        compacted = FABRIC_DIR / f"{agent}-compacted-{ts}.md"
+        import secrets
+        suffix = secrets.token_hex(2)
+        compacted = FABRIC_DIR / f"{agent}-compacted-{ts}-{suffix}.md"
         meta_lines = [
             "---",
             f"agent: {agent}",
@@ -118,10 +121,13 @@ def compact_warm_entries(entries):
         meta_lines.extend(["---", "", summary])
         compacted.write_text("\n".join(meta_lines), encoding="utf-8")
 
-        for e in agent_entries:
-            Path(e["_file"]).unlink(missing_ok=True)
-
-        print(f"  compacted {len(agent_entries)} warm entries for {agent}")
+        # Atomic: only delete originals after compacted file is confirmed on disk
+        if compacted.exists() and compacted.stat().st_size > 0:
+            for e in agent_entries:
+                Path(e["_file"]).unlink(missing_ok=True)
+            print(f"  compacted {len(agent_entries)} warm entries for {agent}")
+        else:
+            print(f"  compaction write failed for {agent}, keeping originals")
 
 
 def call_claude(system, prompt, max_tokens=800):
@@ -212,6 +218,24 @@ def run_once():
         e = parse_entry(f)
         if e:
             entries.append(e)
+
+    # Fallback: force-promote stale warm entries to cold even without API
+    force_cold_cutoff = datetime.now(timezone.utc) - timedelta(days=FORCE_COLD_DAYS)
+    for e in list(warm_entries):
+        try:
+            ts = datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00"))
+            if ts < force_cold_cutoff:
+                f = Path(e["_file"])
+                if f.exists():
+                    update_tier_in_file(f, "cold")
+                    dest = COLD_DIR / f.name
+                    f.rename(dest)
+                    e["_file"] = str(dest)
+                    e["tier"] = "cold"
+                    warm_entries.remove(e)
+                    moved_cold += 1
+        except (ValueError, AttributeError):
+            pass
 
     if warm_entries:
         compact_warm_entries(warm_entries)

@@ -14,7 +14,9 @@ def _write(agent, platform, entry_type, content, refs=None, tags=None):
     now = datetime.now(timezone.utc)
     ts = now.strftime("%Y-%m-%dT%H%MZ")
     ts_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    filepath = FABRIC_DIR / f"{agent}-{entry_type}-{ts}.md"
+    import secrets
+    suffix = secrets.token_hex(2)
+    filepath = FABRIC_DIR / f"{agent}-{entry_type}-{ts}-{suffix}.md"
     lines = ["---", f"agent: {agent}", f"platform: {platform}",
              f"timestamp: {ts_iso}", f"type: {entry_type}", "tier: hot"]
     if refs:

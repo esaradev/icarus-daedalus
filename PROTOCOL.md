@@ -69,7 +69,7 @@ Tier is re-evaluated on every curator run. An entry written as `hot` will become
 
 ## Filenames
 
-`{agent}-{type}-{timestamp}.md` where timestamp is ISO 8601 with colons replaced by empty string for filesystem safety: `2026-03-27T0400Z`.
+`{agent}-{type}-{timestamp}-{suffix}.md` where timestamp is ISO 8601 with colons removed for filesystem safety and suffix is 4 hex characters for uniqueness: `icarus-dialogue-2026-03-27T0400Z-a3f2.md`.
 
 ## index.json
 

@@ -11,7 +11,8 @@ fabric_write() {
     mkdir -p "$FABRIC_DIR"
     local ts=$(date -u '+%Y-%m-%dT%H%MZ')
     local ts_iso=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-    local fp="$FABRIC_DIR/${agent}-${type}-${ts}.md"
+    local suffix=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 4)
+    local fp="$FABRIC_DIR/${agent}-${type}-${ts}-${suffix}.md"
     { echo "---"
       echo "agent: $agent"
       echo "platform: $platform"
