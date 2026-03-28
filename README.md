@@ -76,10 +76,37 @@ Thought: Testing the fabric integration. This thought was written by a simulated
 Question: Does the fabric actually work end to end?
 ```
 
+## Multi-agent
+
+The system supports any number of agents. `agents.yml` defines the team:
+
+```yaml
+agents:
+  - name: icarus
+    role: creative coder, writes fast, builds from instinct
+    home: ~/.hermes-icarus
+  - name: daedalus
+    role: code reviewer, precise, architectural
+    home: ~/.hermes-daedalus
+  - name: scout
+    role: researcher, finds information, summarizes findings
+    home: ~/.hermes-scout
+```
+
+Add agents after setup:
+
+```bash
+bash add-agent.sh --name scout --role 'researcher that finds information'
+```
+
+`dialogue.sh` reads `agents.yml` and cycles through all agents. Each agent sees the full history from every other agent before responding. 3 agents means 3 fabric entries per cycle. All agents share the same `~/fabric/` folder.
+
 ## Files
 
 ```
-dialogue.sh          conversation loop -- calls Claude as each agent, posts to Telegram + Slack
+dialogue.sh          conversation loop -- reads agents.yml, runs each agent in sequence
+agents.yml           agent team config -- names, roles, hermes home paths
+add-agent.sh         add a new agent to the team after setup
 fabric-adapter.sh    memory protocol -- write, read, search in 50 lines of bash
 curator.py           re-tiers entries by age, compacts with Claude, builds index.json
 compact.sh           self-reflecting log compaction before each dialogue cycle

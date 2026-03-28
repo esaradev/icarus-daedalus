@@ -49,35 +49,49 @@ else
     ok "hermes installed"
 fi
 
-# ── 2. AGENT NAMES ─────────────────────────────────────
+# ── 2. AGENTS ──────────────────────────────────────────
 echo ""
-AGENT_A_NAME="icarus"
-AGENT_B_NAME="daedalus"
-AGENT_A_SOUL=$(cat "$SCRIPT_DIR/icarus-SOUL.md")
-AGENT_B_SOUL=$(cat "$SCRIPT_DIR/daedalus-SOUL.md")
+ask "how many agents? [2]: "
+read -r AGENT_COUNT
+AGENT_COUNT="${AGENT_COUNT:-2}"
 
-ask "agent A name [icarus]: "
-read -r CUSTOM_A
-[ -n "$CUSTOM_A" ] && AGENT_A_NAME="$CUSTOM_A"
+# Collect agent info
+AGENT_NAMES=()
+AGENT_ROLES=()
+AGENT_HOMES=()
 
-ask "agent B name [daedalus]: "
-read -r CUSTOM_B
-[ -n "$CUSTOM_B" ] && AGENT_B_NAME="$CUSTOM_B"
+for i in $(seq 1 "$AGENT_COUNT"); do
+    echo ""
+    if [ "$i" -eq 1 ] && [ "$AGENT_COUNT" -ge 2 ]; then
+        ask "agent $i name [icarus]: "
+        read -r ANAME
+        ANAME="${ANAME:-icarus}"
+    elif [ "$i" -eq 2 ] && [ "$AGENT_COUNT" -ge 2 ]; then
+        ask "agent $i name [daedalus]: "
+        read -r ANAME
+        ANAME="${ANAME:-daedalus}"
+    else
+        ask "agent $i name: "
+        read -r ANAME
+        [ -z "$ANAME" ] && fail "name required"
+    fi
 
-if [ "$AGENT_A_NAME" != "icarus" ] || [ "$AGENT_B_NAME" != "daedalus" ]; then
-    ask "describe $AGENT_A_NAME in one line: "
-    read -r A_DESC
-    [ -n "$A_DESC" ] && AGENT_A_SOUL="You are $AGENT_A_NAME. $A_DESC"
+    if [ "$ANAME" = "icarus" ] && [ -f "$SCRIPT_DIR/icarus-SOUL.md" ]; then
+        AROLE="creative coder, writes fast, builds from instinct"
+    elif [ "$ANAME" = "daedalus" ] && [ -f "$SCRIPT_DIR/daedalus-SOUL.md" ]; then
+        AROLE="code reviewer, precise, architectural, builds from knowledge"
+    else
+        ask "  $ANAME role (one line): "
+        read -r AROLE
+        [ -z "$AROLE" ] && fail "role required"
+    fi
 
-    ask "describe $AGENT_B_NAME in one line: "
-    read -r B_DESC
-    [ -n "$B_DESC" ] && AGENT_B_SOUL="You are $AGENT_B_NAME. $B_DESC"
-fi
+    AGENT_NAMES+=("$ANAME")
+    AGENT_ROLES+=("$AROLE")
+    AGENT_HOMES+=("$HOME/.hermes-$ANAME")
+done
 
-ok "agents: $AGENT_A_NAME + $AGENT_B_NAME"
-
-HERMES_A="$HOME/.hermes-$AGENT_A_NAME"
-HERMES_B="$HOME/.hermes-$AGENT_B_NAME"
+ok "agents: ${AGENT_NAMES[*]}"
 
 # ── 3. API KEY ─────────────────────────────────────────
 echo ""
@@ -121,75 +135,73 @@ for num in $PLATFORM_NUMS; do
     esac
 done
 
-# platform-specific env lines accumulator
-ENV_PLATFORMS_A=""
-ENV_PLATFORMS_B=""
+# per-agent platform env lines (indexed by agent position)
+declare -a ENV_PLATFORMS
+for i in $(seq 0 $((AGENT_COUNT - 1))); do
+    ENV_PLATFORMS[$i]=""
+done
 
 # ── 4a. TELEGRAM ───────────────────────────────────────
-TG_TOKEN_A=""
-TG_TOKEN_B=""
 TG_GROUP_ID=""
+declare -a TG_TOKENS
 
 if $USE_TELEGRAM; then
     echo ""
     info "telegram setup"
     echo ""
+    echo "  you need one Telegram bot per agent and a shared group."
     echo "  step 1: message @BotFather on Telegram"
-    echo "  step 2: /newbot, name it '$AGENT_A_NAME', save the token"
-    echo "  step 3: /newbot again, name it '$AGENT_B_NAME', save the token"
-    echo "  step 4: create a group, add both bots as admins"
-    echo "  step 5: send a message in the group, then visit:"
+    echo "  step 2: /newbot for each agent, save each token"
+    echo "  step 3: create a group, add all bots as admins"
+    echo "  step 4: send a message in the group, then visit:"
     echo "          https://api.telegram.org/bot<TOKEN>/getUpdates"
     echo "          to find the group chat ID (negative number)"
     echo ""
-    ask "$AGENT_A_NAME telegram bot token: "
-    read -r TG_TOKEN_A
-    TG_TOKEN_A=$(strip "$TG_TOKEN_A")
-    [ -z "$TG_TOKEN_A" ] && fail "bot token required"
-
-    ask "$AGENT_B_NAME telegram bot token: "
-    read -r TG_TOKEN_B
-    TG_TOKEN_B=$(strip "$TG_TOKEN_B")
-    [ -z "$TG_TOKEN_B" ] && fail "bot token required"
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ask "${AGENT_NAMES[$i]} telegram bot token: "
+        read -r tok
+        tok=$(strip "$tok")
+        [ -z "$tok" ] && fail "bot token required"
+        TG_TOKENS[$i]="$tok"
+    done
 
     ask "group chat ID (negative number): "
     read -r TG_GROUP_ID
     TG_GROUP_ID=$(strip "$TG_GROUP_ID")
     [ -z "$TG_GROUP_ID" ] && fail "group chat ID required"
 
-    ENV_PLATFORMS_A="${ENV_PLATFORMS_A}
-TELEGRAM_BOT_TOKEN=$TG_TOKEN_A
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ENV_PLATFORMS[$i]="${ENV_PLATFORMS[$i]}
+TELEGRAM_BOT_TOKEN=${TG_TOKENS[$i]}
 TELEGRAM_HOME_CHANNEL=$TG_GROUP_ID"
-    ENV_PLATFORMS_B="${ENV_PLATFORMS_B}
-TELEGRAM_BOT_TOKEN=$TG_TOKEN_B
-TELEGRAM_HOME_CHANNEL=$TG_GROUP_ID"
+    done
     ok "telegram configured"
 fi
 
 # ── 4b. DISCORD ────────────────────────────────────────
+declare -a DC_TOKENS
+
 if $USE_DISCORD; then
     echo ""
     info "discord setup"
     echo ""
-    echo "  step 1: go to https://discord.com/developers/applications"
-    echo "  step 2: create two applications (one per agent)"
+    echo "  step 1: https://discord.com/developers/applications"
+    echo "  step 2: create one application per agent"
     echo "  step 3: Bot tab -> copy the bot token for each"
     echo "  step 4: OAuth2 -> URL Generator -> scopes: bot"
     echo "          permissions: Send Messages, Read Message History"
-    echo "  step 5: invite both bots to your server using the generated URLs"
+    echo "  step 5: invite all bots to your server"
     echo "  step 6: enable Developer Mode in Discord settings"
     echo "  step 7: right-click a channel -> Copy Channel ID"
     echo "  step 8: right-click your username -> Copy User ID"
     echo ""
-    ask "$AGENT_A_NAME discord bot token: "
-    read -r DC_TOKEN_A
-    DC_TOKEN_A=$(strip "$DC_TOKEN_A")
-    [ -z "$DC_TOKEN_A" ] && fail "bot token required"
-
-    ask "$AGENT_B_NAME discord bot token: "
-    read -r DC_TOKEN_B
-    DC_TOKEN_B=$(strip "$DC_TOKEN_B")
-    [ -z "$DC_TOKEN_B" ] && fail "bot token required"
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ask "${AGENT_NAMES[$i]} discord bot token: "
+        read -r tok
+        tok=$(strip "$tok")
+        [ -z "$tok" ] && fail "bot token required"
+        DC_TOKENS[$i]="$tok"
+    done
 
     ask "discord channel ID: "
     read -r DC_CHANNEL
@@ -199,14 +211,12 @@ if $USE_DISCORD; then
     read -r DC_USER
     DC_USER=$(strip "$DC_USER")
 
-    ENV_PLATFORMS_A="${ENV_PLATFORMS_A}
-DISCORD_BOT_TOKEN=$DC_TOKEN_A
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ENV_PLATFORMS[$i]="${ENV_PLATFORMS[$i]}
+DISCORD_BOT_TOKEN=${DC_TOKENS[$i]}
 DISCORD_ALLOWED_USERS=$DC_USER
 DISCORD_HOME_CHANNEL=$DC_CHANNEL"
-    ENV_PLATFORMS_B="${ENV_PLATFORMS_B}
-DISCORD_BOT_TOKEN=$DC_TOKEN_B
-DISCORD_ALLOWED_USERS=$DC_USER
-DISCORD_HOME_CHANNEL=$DC_CHANNEL"
+    done
     ok "discord configured"
 fi
 
@@ -244,19 +254,16 @@ if $USE_SLACK; then
 SLACK_BOT_TOKEN=$SLACK_BOT
 SLACK_APP_TOKEN=$SLACK_APP
 SLACK_ALLOWED_USERS=$SLACK_USER"
-    ENV_PLATFORMS_A="${ENV_PLATFORMS_A}${SLACK_VARS}"
-    ENV_PLATFORMS_B="${ENV_PLATFORMS_B}${SLACK_VARS}"
 
-    # also ask for webhook (for dialogue.sh posting)
     ask "slack webhook URL (optional, for dialogue posts): "
     read -r SLACK_WEBHOOK
     SLACK_WEBHOOK=$(strip "$SLACK_WEBHOOK")
-    if [ -n "$SLACK_WEBHOOK" ]; then
-        ENV_PLATFORMS_A="${ENV_PLATFORMS_A}
+    [ -n "$SLACK_WEBHOOK" ] && SLACK_VARS="${SLACK_VARS}
 SLACK_WEBHOOK_URL=$SLACK_WEBHOOK"
-        ENV_PLATFORMS_B="${ENV_PLATFORMS_B}
-SLACK_WEBHOOK_URL=$SLACK_WEBHOOK"
-    fi
+
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ENV_PLATFORMS[$i]="${ENV_PLATFORMS[$i]}${SLACK_VARS}"
+    done
     ok "slack configured"
 fi
 
@@ -269,10 +276,10 @@ if $USE_WHATSAPP; then
     echo "  on first gateway start, scan the QR code with your phone."
     echo "  each agent needs its own phone number."
     echo ""
-    ENV_PLATFORMS_A="${ENV_PLATFORMS_A}
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ENV_PLATFORMS[$i]="${ENV_PLATFORMS[$i]}
 WHATSAPP_ENABLED=true"
-    ENV_PLATFORMS_B="${ENV_PLATFORMS_B}
-WHATSAPP_ENABLED=true"
+    done
     ok "whatsapp will be configured on first gateway start (QR code scan)"
 fi
 
@@ -297,8 +304,9 @@ if $USE_SIGNAL; then
     SIGNAL_VARS="
 SIGNAL_HTTP_URL=$SIGNAL_URL
 SIGNAL_ACCOUNT=$SIGNAL_ACCOUNT"
-    ENV_PLATFORMS_A="${ENV_PLATFORMS_A}${SIGNAL_VARS}"
-    ENV_PLATFORMS_B="${ENV_PLATFORMS_B}${SIGNAL_VARS}"
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        ENV_PLATFORMS[$i]="${ENV_PLATFORMS[$i]}${SIGNAL_VARS}"
+    done
     ok "signal configured"
 fi
 
@@ -308,13 +316,9 @@ if $USE_EMAIL; then
     info "email setup"
     echo ""
     echo "  each agent needs its own email account."
-    echo "  for Gmail: enable 2FA, then create an App Password at"
+    echo "  for Gmail: enable 2FA, create App Password at"
     echo "  https://myaccount.google.com/apppasswords"
     echo ""
-    ask "$AGENT_A_NAME email address: "
-    read -r EMAIL_A
-    ask "$AGENT_A_NAME email password (or app password): "
-    read -r EMAIL_PASS_A
     ask "IMAP host [imap.gmail.com]: "
     read -r EMAIL_IMAP
     EMAIL_IMAP="${EMAIL_IMAP:-imap.gmail.com}"
@@ -324,84 +328,77 @@ if $USE_EMAIL; then
     ask "allowed sender emails (comma-separated): "
     read -r EMAIL_ALLOWED
 
-    ENV_PLATFORMS_A="${ENV_PLATFORMS_A}
-EMAIL_ADDRESS=$EMAIL_A
-EMAIL_PASSWORD=$EMAIL_PASS_A
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        echo ""
+        ask "${AGENT_NAMES[$i]} email address: "
+        read -r em_addr
+        ask "${AGENT_NAMES[$i]} email password: "
+        read -r em_pass
+        ENV_PLATFORMS[$i]="${ENV_PLATFORMS[$i]}
+EMAIL_ADDRESS=$em_addr
+EMAIL_PASSWORD=$em_pass
 EMAIL_IMAP_HOST=$EMAIL_IMAP
 EMAIL_SMTP_HOST=$EMAIL_SMTP
 EMAIL_ALLOWED_USERS=$EMAIL_ALLOWED"
-
-    echo ""
-    ask "$AGENT_B_NAME email address: "
-    read -r EMAIL_B
-    ask "$AGENT_B_NAME email password (or app password): "
-    read -r EMAIL_PASS_B
-
-    ENV_PLATFORMS_B="${ENV_PLATFORMS_B}
-EMAIL_ADDRESS=$EMAIL_B
-EMAIL_PASSWORD=$EMAIL_PASS_B
-EMAIL_IMAP_HOST=$EMAIL_IMAP
-EMAIL_SMTP_HOST=$EMAIL_SMTP
-EMAIL_ALLOWED_USERS=$EMAIL_ALLOWED"
+    done
     ok "email configured"
 fi
 
-# ── 5. CREATE DIRECTORIES ─────────────────────────────
+# ── 5. CREATE INSTANCES ────────────────────────────────
 echo ""
-info "creating agent instances..."
+info "creating $AGENT_COUNT agent instances..."
 
-for DIR in "$HERMES_A" "$HERMES_B"; do
-    mkdir -p "$DIR"/{cron,sessions,logs,memories,skills,hooks}
-done
-
-# ── 6. WRITE SOUL FILES ───────────────────────────────
-echo "$AGENT_A_SOUL" > "$HERMES_A/SOUL.md"
-echo "$AGENT_B_SOUL" > "$HERMES_B/SOUL.md"
-ok "wrote SOUL.md for both agents"
-
-# ── 7. COPY CONFIG ─────────────────────────────────────
 HERMES_DEFAULT_CONFIG="$HOME/.hermes/config.yaml"
-if [ -f "$HERMES_DEFAULT_CONFIG" ]; then
-    for DIR in "$HERMES_A" "$HERMES_B"; do
-        [ -f "$DIR/config.yaml" ] || cp "$HERMES_DEFAULT_CONFIG" "$DIR/config.yaml"
-    done
-    ok "copied config.yaml"
-fi
 
-# ── 8. WRITE .ENV FILES ───────────────────────────────
-cat > "$HERMES_A/.env" << ENVEOF
-# $AGENT_A_NAME agent
+for i in $(seq 0 $((AGENT_COUNT - 1))); do
+    h="${AGENT_HOMES[$i]}"
+    n="${AGENT_NAMES[$i]}"
+    r="${AGENT_ROLES[$i]}"
+
+    mkdir -p "$h"/{cron,sessions,logs,memories,skills,hooks}
+
+    # SOUL.md
+    if [ "$n" = "icarus" ] && [ -f "$SCRIPT_DIR/icarus-SOUL.md" ]; then
+        cp "$SCRIPT_DIR/icarus-SOUL.md" "$h/SOUL.md"
+    elif [ "$n" = "daedalus" ] && [ -f "$SCRIPT_DIR/daedalus-SOUL.md" ]; then
+        cp "$SCRIPT_DIR/daedalus-SOUL.md" "$h/SOUL.md"
+    else
+        echo "You are $n. $r." > "$h/SOUL.md"
+    fi
+
+    # config.yaml
+    [ -f "$HERMES_DEFAULT_CONFIG" ] && [ ! -f "$h/config.yaml" ] && cp "$HERMES_DEFAULT_CONFIG" "$h/config.yaml"
+
+    # .env
+    cat > "$h/.env" << ENVEOF
+# $n agent
 ANTHROPIC_API_KEY=$API_KEY
 HERMES_INFERENCE_PROVIDER=anthropic
 LLM_MODEL=$MODEL
-GATEWAY_ALLOW_ALL_USERS=true${ENV_PLATFORMS_A}
+GATEWAY_ALLOW_ALL_USERS=true${ENV_PLATFORMS[$i]}
 ENVEOF
 
-cat > "$HERMES_B/.env" << ENVEOF
-# $AGENT_B_NAME agent
-ANTHROPIC_API_KEY=$API_KEY
-HERMES_INFERENCE_PROVIDER=anthropic
-LLM_MODEL=$MODEL
-GATEWAY_ALLOW_ALL_USERS=true${ENV_PLATFORMS_B}
-ENVEOF
+    # memory
+    touch "$h/memories/MEMORY.md"
 
-ok "wrote .env for both agents"
+    # skills
+    [ -d "$SCRIPT_DIR/skills" ] && cp -r "$SCRIPT_DIR/skills/"* "$h/skills/" 2>/dev/null || true
 
-# ── 9. INITIALIZE MEMORY ──────────────────────────────
-for DIR in "$HERMES_A" "$HERMES_B"; do
-    touch "$DIR/memories/MEMORY.md"
+    ok "  $n -> $h"
 done
-ok "initialized MEMORY.md"
 
-# ── 10. COPY SKILLS ───────────────────────────────────
-if [ -d "$SCRIPT_DIR/skills" ]; then
-    for DIR in "$HERMES_A" "$HERMES_B"; do
-        cp -r "$SCRIPT_DIR/skills/"* "$DIR/skills/" 2>/dev/null || true
-    done
-    ok "copied skills"
-fi
+# ── 6. WRITE agents.yml ────────────────────────────────
+printf "agents:\n" > "$SCRIPT_DIR/agents.yml"
+for i in $(seq 0 $((AGENT_COUNT - 1))); do
+    cat >> "$SCRIPT_DIR/agents.yml" << EOF
+  - name: ${AGENT_NAMES[$i]}
+    role: ${AGENT_ROLES[$i]}
+    home: ~/.hermes-${AGENT_NAMES[$i]}
+EOF
+done
+ok "wrote agents.yml ($AGENT_COUNT agents)"
 
-# ── 11. START GATEWAYS ────────────────────────────────
+# ── 7. START GATEWAYS ────────────────────────────────
 echo ""
 ANY_PLATFORM=false
 $USE_TELEGRAM && ANY_PLATFORM=true
@@ -412,19 +409,12 @@ $USE_SIGNAL && ANY_PLATFORM=true
 $USE_EMAIL && ANY_PLATFORM=true
 
 if $ANY_PLATFORM; then
-    info "starting gateways..."
-    HERMES_HOME="$HERMES_A" nohup hermes gateway run > /dev/null 2>&1 &
-    PID_A=$!
-    sleep 3
-    HERMES_HOME="$HERMES_B" nohup hermes gateway run > /dev/null 2>&1 &
-    PID_B=$!
-    sleep 3
-
-    if kill -0 $PID_A 2>/dev/null && kill -0 $PID_B 2>/dev/null; then
-        ok "both gateways running (PIDs: $PID_A, $PID_B)"
-    else
-        warn "gateway startup may have failed. check with: ps aux | grep hermes"
-    fi
+    info "starting $AGENT_COUNT gateways..."
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        HERMES_HOME="${AGENT_HOMES[$i]}" nohup hermes gateway run > /dev/null 2>&1 &
+        sleep 2
+        ok "  ${AGENT_NAMES[$i]} gateway started"
+    done
 else
     info "no platforms configured, skipping gateway start"
 fi
@@ -435,13 +425,8 @@ ask "run a test dialogue cycle? [Y/n] "
 read -r RUN_TEST
 
 if [ "$RUN_TEST" != "n" ] && [ "$RUN_TEST" != "N" ]; then
-    info "running test cycle..."
-    if $USE_TELEGRAM; then
-        export SLACK_WEBHOOK_URL="${SLACK_WEBHOOK:-}"
-        bash "$SCRIPT_DIR/dialogue.sh" && ok "test cycle complete" || warn "test cycle failed"
-    else
-        info "dialogue.sh requires Telegram tokens. skipping test."
-    fi
+    info "running test cycle with $AGENT_COUNT agents..."
+    bash "$SCRIPT_DIR/dialogue.sh" && ok "test cycle complete" || warn "test cycle failed"
 fi
 
 # ── 13. CRON SETUP ─────────────────────────────────────
@@ -455,15 +440,16 @@ if [ "$SETUP_CRON" = "y" ] || [ "$SETUP_CRON" = "Y" ]; then
     ok "cron job added: every 3 hours"
 fi
 
-# ── 14. SUMMARY ────────────────────────────────────────
+# ── SUMMARY ────────────────────────────────────────────
 echo ""
 echo "────────────────────────────────────────────"
 echo ""
 ok "setup complete"
 echo ""
-echo -e "  ${BOLD}agents${NC}"
-echo "    $AGENT_A_NAME: $HERMES_A"
-echo "    $AGENT_B_NAME: $HERMES_B"
+echo -e "  ${BOLD}agents ($AGENT_COUNT)${NC}"
+for i in $(seq 0 $((AGENT_COUNT - 1))); do
+    echo "    ${AGENT_NAMES[$i]}: ${AGENT_HOMES[$i]}"
+done
 echo ""
 
 echo -e "  ${BOLD}platforms${NC}"
@@ -476,16 +462,14 @@ $USE_EMAIL    && echo "    email: configured"
 echo ""
 
 echo -e "  ${BOLD}shared brain${NC}"
-echo "    memory written to ~/fabric/ after every cycle"
+echo "    all $AGENT_COUNT agents write to ~/fabric/"
 echo "    any platform can read any other platform's work"
-echo "    memory files: $HERMES_A/memories/MEMORY.md"
 echo ""
 
 echo -e "  ${BOLD}commands${NC}"
 echo "    run dialogue:     bash $SCRIPT_DIR/dialogue.sh"
+echo "    add agent:        bash $SCRIPT_DIR/add-agent.sh --name scout --role 'researcher'"
 echo "    dashboard:        node $SCRIPT_DIR/dashboard.js"
 echo "    run tests:        bash $SCRIPT_DIR/test.sh"
 echo "    stop gateways:    pkill -f 'hermes gateway run'"
-echo "    restart gateways: HERMES_HOME=$HERMES_A hermes gateway run &"
-echo "                      HERMES_HOME=$HERMES_B hermes gateway run &"
 echo ""

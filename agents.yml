@@ -1,0 +1,7 @@
+agents:
+  - name: icarus
+    role: creative coder, writes fast, builds from instinct
+    home: ~/.hermes-icarus
+  - name: daedalus
+    role: code reviewer, precise, architectural, builds from knowledge
+    home: ~/.hermes-daedalus
