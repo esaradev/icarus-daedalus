@@ -3,271 +3,329 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1920">
-<title>icarus</title>
+<title>icarus.sys</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-@font-face{font-family:'BT';src:local('Menlo'),local('Consolas'),local('Monaco');font-display:swap}
-:root{--bg:#0a0a0a;--panel:#0f0f0f;--bdr:#1a1a1a;--t0:#f0f0f0;--t1:#b0b0b0;--t2:#606060;--t3:#383838;--hi:#ff8c00;--up:#00c853;--dn:#ff1744;--bl:#448aff;--yl:#ffd600}
-body{font-family:'BT',monospace;background:var(--bg);color:var(--t1);width:1920px;height:1080px;overflow:hidden;font-size:11px;line-height:1;-webkit-font-smoothing:none}
+:root{--bg:#0a0a0a;--panel:#0d0d0d;--bdr:#262626;--bdr2:#1a1a1a;--t0:#d4d4d4;--t1:#a3a3a3;--t2:#525252;--hi:#d97706;--up:#16a34a;--dn:#dc2626;--bl:#2563eb;--yl:#a16207;--cyan:#0891b2}
+body{font-family:'IBM Plex Mono',monospace;background:var(--bg);color:var(--t1);width:1920px;height:1080px;overflow:hidden;font-size:11px;line-height:1.2;-webkit-font-smoothing:antialiased}
 
-/* grid: bloomberg-style tiled panels, no gaps, all borders */
-.G{display:grid;width:100%;height:100%;grid-template-columns:480px 480px 480px 480px;grid-template-rows:28px 180px 180px 1fr 28px;grid-template-areas:
-  "hd hd hd hd"
-  "ag ag tm tm"
-  "fd fd me me"
-  "fd fd rt rt"
-  "ft ft ft ft"}
+/* ── SHELL ── */
+.shell{display:flex;flex-direction:column;height:100%}
 
-.P{background:var(--panel);border:1px solid var(--bdr);overflow:hidden;display:flex;flex-direction:column}
-.P-hd{background:var(--bdr);color:var(--t2);font-size:10px;padding:2px 6px;letter-spacing:1px;text-transform:uppercase;flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
-.P-hd .tag{color:var(--hi)}
-.P-body{flex:1;overflow-y:auto;overflow-x:hidden}
-.P-body::-webkit-scrollbar{width:2px}
-.P-body::-webkit-scrollbar-thumb{background:var(--t3)}
+/* ── COMMAND BAR ── */
+.cmd-bar{height:32px;background:#0d0d0d;border-bottom:1px solid var(--bdr);display:flex;align-items:center;padding:0 10px;gap:8px;flex-shrink:0}
+.cmd-sys{color:var(--hi);font-size:11px;font-weight:500}
+.cmd-input{flex:1;background:transparent;border:1px solid var(--bdr2);color:var(--t0);font-family:inherit;font-size:11px;padding:3px 8px;outline:none;caret-color:var(--hi)}
+.cmd-input:focus{border-color:var(--bdr)}
+.cmd-input::placeholder{color:var(--t2)}
 
-/* header bar */
-.HD{grid-area:hd;background:var(--bdr);display:flex;align-items:center;padding:0 8px;gap:16px;border-bottom:1px solid var(--t3)}
-.HD .logo{color:var(--hi);font-size:12px;font-weight:bold;letter-spacing:2px}
-.HD .sep{color:var(--t3)}
-.HD .kv{color:var(--t2)}
-.HD .kv b{color:var(--t1);font-weight:normal}
-.HD .live{color:var(--up)}
-.HD .r{margin-left:auto;display:flex;gap:12px}
+/* ── FUNCTION KEYS ── */
+.fn-bar{height:22px;background:#111;border-bottom:1px solid var(--bdr);display:flex;align-items:center;padding:0 10px;gap:2px;flex-shrink:0}
+.fn{padding:2px 8px;font-size:10px;color:var(--t2);cursor:pointer;display:flex;gap:4px}
+.fn b{color:var(--t1);font-weight:500}
+.fn:hover b{color:var(--hi)}
+.fn-sep{width:1px;height:12px;background:var(--bdr2);margin:0 4px}
+.fn-r{margin-left:auto;display:flex;gap:8px;color:var(--t2);font-size:10px}
+.fn-r .live{color:var(--up)}
 
-/* footer */
-.FT{grid-area:ft;background:var(--bdr);display:flex;align-items:center;padding:0 8px;gap:8px;border-top:1px solid var(--t3)}
-.FT .cmd{color:var(--t2);cursor:pointer}
-.FT .cmd:hover{color:var(--hi)}
-.FT .sep{color:var(--t3)}
+/* ── STATS RIBBON ── */
+.ribbon{height:24px;background:#0d0d0d;border-bottom:1px solid var(--bdr);display:flex;align-items:center;padding:0 10px;gap:4px;flex-shrink:0;font-size:10px}
+.ribbon .k{color:var(--t2)}
+.ribbon .v{color:var(--t0);margin-right:8px}
+.ribbon .sep{color:var(--bdr);margin:0 2px}
 
-/* agents panel */
-.AG{grid-area:ag}
-.ag-row{display:flex;padding:2px 6px;border-bottom:1px solid #131313}
-.ag-row:hover{background:#141414}
-.ag-name{width:90px;color:var(--t0);overflow:hidden;text-overflow:ellipsis}
-.ag-stat{width:50px;text-align:center}
-.ag-role{flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ag-plat{width:70px;text-align:right;color:var(--t2)}
-.ag-ts{width:50px;text-align:right;color:var(--t3)}
+/* ── GRID ── */
+.grid{flex:1;display:grid;grid-template-columns:440px 1fr 520px;grid-template-rows:1fr 1fr;overflow:hidden}
 
-/* timeline chart */
-.TM{grid-area:tm}
+.P{border:1px solid var(--bdr);border-top:none;border-left:none;display:flex;flex-direction:column;overflow:hidden;background:var(--panel)}
+.P:first-child{border-left:1px solid var(--bdr)}
+.P-h{height:20px;background:#111;border-bottom:1px solid var(--bdr2);padding:0 8px;display:flex;align-items:center;font-size:10px;color:var(--t2);letter-spacing:0.5px;flex-shrink:0}
+.P-h span{margin-left:auto;color:var(--t2)}
+.P-b{flex:1;overflow-y:auto;overflow-x:hidden}
+.P-b::-webkit-scrollbar{width:2px}
+.P-b::-webkit-scrollbar-thumb{background:#333}
+
+/* ── TABLE ── */
+.T{width:100%;border-collapse:collapse}
+.T th{font-weight:500;color:var(--t2);text-align:left;padding:2px 8px;border-bottom:1px solid var(--bdr2);font-size:10px;position:sticky;top:0;background:#111;letter-spacing:0.5px}
+.T td{padding:2px 8px;border-bottom:1px solid #131313;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.T tr:hover td{background:#111}
+
+/* ── TICKER FEED ── */
+.tick{padding:2px 8px;border-bottom:1px solid #131313;display:flex;gap:6px;font-size:11px;line-height:1.3}
+.tick:hover{background:#111}
+.tick-ts{color:var(--t2);flex-shrink:0;width:40px}
+.tick-tag{flex-shrink:0;width:42px;text-align:center}
+.tick-agent{flex-shrink:0;width:72px;overflow:hidden;text-overflow:ellipsis}
+.tick-text{color:var(--t1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tick-expand{color:var(--t1);white-space:normal;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+
+/* ── SYSTEM PANEL ── */
+.sys-sec{padding:4px 8px;border-bottom:1px solid var(--bdr2)}
+.sys-hd{font-size:10px;color:var(--t2);letter-spacing:0.5px;margin-bottom:3px}
+.sys-row{display:flex;align-items:center;gap:6px;padding:1px 0;font-size:11px}
+.sys-k{width:40px;text-align:right}
+.sys-bar{flex:1;height:4px;background:#1a1a1a}
+.sys-fill{height:100%}
+.sys-v{width:28px;text-align:right;color:var(--t2)}
+
+/* ── LED INDICATORS ── */
+.led{display:inline-block;width:7px;height:7px;flex-shrink:0}
+.led-on{background:var(--up)}
+.led-off{border:1px solid var(--t2)}
+
+/* ── CHART ── */
 canvas{width:100%;height:100%}
 
-/* feed */
-.FD{grid-area:fd}
-.fd-row{padding:3px 6px;border-bottom:1px solid #131313}
-.fd-ts{color:var(--t3);display:inline}
-.fd-agent{display:inline}
-.fd-cyc{color:var(--t3);display:inline}
-.fd-text{color:var(--t1);margin-top:1px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3}
+/* colors */
+.c-hi{color:var(--hi)}.c-up{color:var(--up)}.c-dn{color:var(--dn)}.c-bl{color:var(--bl)}.c-yl{color:var(--yl)}.c-cyan{color:var(--cyan)}
 
-/* memory entries */
-.ME{grid-area:me}
-.me-row{display:flex;padding:2px 6px;border-bottom:1px solid #131313;gap:4px}
-.me-tier{width:32px}
-.me-type{width:60px;color:var(--t2)}
-.me-agent{width:70px}
-.me-body{flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.me-ts{width:36px;text-align:right;color:var(--t3)}
-
-/* right panel: tiers + platforms + compaction */
-.RT{grid-area:rt}
-.rt-section{padding:2px 6px;border-bottom:1px solid var(--bdr)}
-.rt-section-hd{color:var(--t3);font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:2px 0}
-.tier-row{display:flex;align-items:center;gap:4px;padding:1px 0}
-.tier-k{width:32px;text-align:right}
-.tier-bar{flex:1;height:4px;background:var(--t3)}
-.tier-fill{height:100%}
-.tier-n{width:24px;text-align:right;color:var(--t2)}
-.plat-row{display:flex;gap:4px;padding:1px 0}
-.plat-dot{width:6px;height:6px;border-radius:50%;margin-top:2px}
-.plat-name{width:70px}
-.plat-badge{width:60px;color:var(--t2)}
-.plat-state{flex:1;text-align:right}
-.cmp-row{padding:1px 0;color:var(--t2)}
-.cmp-ts{color:var(--t3)}
-
-/* stat number colors */
-.up{color:var(--up)}.dn{color:var(--dn)}.hi{color:var(--hi)}.bl{color:var(--bl)}.yl{color:var(--yl)}
+/* ── FOOTER ── */
+.footer{height:20px;background:#111;border-top:1px solid var(--bdr);display:flex;align-items:center;padding:0 10px;font-size:10px;color:var(--t2);flex-shrink:0}
+.footer span{margin-left:auto}
 </style>
 </head>
 <body>
-<div class="G">
+<div class="shell">
 
-<div class="HD">
-  <span class="logo">ICARUS</span>
-  <span class="sep">|</span>
-  <span class="kv">AGENTS <b id="h-agents">--</b></span>
-  <span class="sep">|</span>
-  <span class="kv">CYCLES <b id="h-cycles">--</b></span>
-  <span class="sep">|</span>
-  <span class="kv">ENTRIES <b id="h-entries">--</b></span>
-  <span class="sep">|</span>
-  <span class="kv">BRAIN <b id="h-brain">--</b></span>
-  <span class="sep">|</span>
-  <span class="kv">HOT <b class="hi" id="h-hot">--</b> WARM <b class="yl" id="h-warm">--</b> COLD <b class="bl" id="h-cold">--</b></span>
-  <div class="r">
-    <span class="kv">LAST <b id="h-last">--</b></span>
-    <span class="sep">|</span>
-    <span class="live" id="h-live">LIVE</span>
+<!-- COMMAND BAR -->
+<div class="cmd-bar">
+  <span class="cmd-sys">icarus.sys</span>
+  <input class="cmd-input" placeholder="> search or command..." id="cmd" spellcheck="false">
+</div>
+
+<!-- FUNCTION KEYS -->
+<div class="fn-bar">
+  <div class="fn" onclick="act('cycle')"><b>F1</b>RUN</div>
+  <div class="fn" onclick="act('compact')"><b>F2</b>COMPACT</div>
+  <div class="fn"><b>F3</b>LOGS</div>
+  <div class="fn"><b>F4</b>FABRIC</div>
+  <div class="fn-sep"></div>
+  <div class="fn-r">
+    <span id="h-live" class="live">CONNECTED</span>
+    <span id="h-clock"></span>
   </div>
 </div>
 
-<div class="P AG">
-  <div class="P-hd">agents <span class="tag" id="ag-count"></span></div>
-  <div class="P-body">
-    <div class="ag-row" style="color:var(--t3)">
-      <div class="ag-name">NAME</div><div class="ag-stat">STAT</div><div class="ag-role">ROLE</div><div class="ag-plat">PLAT</div><div class="ag-ts">LAST</div>
+<!-- STATS RIBBON -->
+<div class="ribbon" id="ribbon"></div>
+
+<!-- MAIN GRID: 3 cols x 2 rows = 6 panels -->
+<div class="grid">
+
+  <!-- TOP LEFT: AGENTS -->
+  <div class="P">
+    <div class="P-h">AGENTS <span id="p-ag-n"></span></div>
+    <div class="P-b">
+      <table class="T"><thead><tr><th></th><th>NAME</th><th>STATUS</th><th>ROLE</th><th>PLAT</th><th>LAST</th></tr></thead><tbody id="ag-body"></tbody></table>
     </div>
-    <div id="al"></div>
   </div>
-</div>
 
-<div class="P TM">
-  <div class="P-hd">entry timeline <span class="tag" id="tm-days"></span></div>
-  <div class="P-body"><canvas id="cv"></canvas></div>
-</div>
+  <!-- TOP CENTER: FEED -->
+  <div class="P">
+    <div class="P-h">TICKER <span id="p-fd-n"></span></div>
+    <div class="P-b" id="fd-body"></div>
+  </div>
 
-<div class="P FD">
-  <div class="P-hd">activity feed <span class="tag" id="fd-count"></span></div>
-  <div class="P-body" id="fd"></div>
-</div>
+  <!-- TOP RIGHT: CHART -->
+  <div class="P">
+    <div class="P-h">TIMELINE <span id="p-tm-n"></span></div>
+    <div class="P-b"><canvas id="cv"></canvas></div>
+  </div>
 
-<div class="P ME">
-  <div class="P-hd">fabric entries <span class="tag" id="me-count"></span></div>
-  <div class="P-body">
-    <div class="me-row" style="color:var(--t3)">
-      <div class="me-tier">TIER</div><div class="me-type">TYPE</div><div class="me-agent">AGENT</div><div class="me-body">CONTENT</div><div class="me-ts">AGE</div>
+  <!-- BOTTOM LEFT: FABRIC ENTRIES -->
+  <div class="P">
+    <div class="P-h">FABRIC <span id="p-me-n"></span></div>
+    <div class="P-b">
+      <table class="T"><thead><tr><th>TIER</th><th>TYPE</th><th>AGENT</th><th>CONTENT</th><th>AGE</th></tr></thead><tbody id="me-body"></tbody></table>
     </div>
-    <div id="me"></div>
   </div>
+
+  <!-- BOTTOM CENTER: MEMORY DETAIL -->
+  <div class="P">
+    <div class="P-h">MEMORY</div>
+    <div class="P-b" id="mem-detail"></div>
+  </div>
+
+  <!-- BOTTOM RIGHT: SYSTEM -->
+  <div class="P">
+    <div class="P-h">SYSTEM</div>
+    <div class="P-b" id="sys-body"></div>
+  </div>
+
 </div>
 
-<div class="P RT">
-  <div class="P-hd">system</div>
-  <div class="P-body" id="rt"></div>
-</div>
-
-<div class="FT">
-  <span class="cmd" onclick="act('cycle')">F1 RUN CYCLE</span>
-  <span class="sep">|</span>
-  <span class="cmd" onclick="act('compact')">F2 COMPACT</span>
-  <span class="sep">|</span>
-  <span style="color:var(--t3)">ICARUS AGENT MEMORY TERMINAL</span>
-  <span style="margin-left:auto;color:var(--t3)" id="ft-time"></span>
+<!-- FOOTER -->
+<div class="footer">
+  ICARUS AGENT MEMORY TERMINAL v0.1
+  <span id="ft-ts"></span>
 </div>
 
 </div>
 
 <script>
-var AC={},CP=['#ff8c00','#448aff','#00c853','#d500f9','#ff1744','#ffd600','#00e5ff','#ff6d00'];
+var AC={},CP=['#d97706','#2563eb','#16a34a','#9333ea','#dc2626','#a16207','#0891b2','#c2410c'];
 function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
-function ago(t){if(!t)return'--';try{var d=new Date(t.replace(' UTC',':00Z').replace(' ','T')),m=Math.floor((Date.now()-d)/6e4);return m<1?'now':m<60?m+'m':m<1440?Math.floor(m/60)+'h':Math.floor(m/1440)+'d'}catch(e){return'--'}}
+function ago(t){if(!t)return'--';try{var d=new Date(t.replace(' UTC',':00Z').replace(' ','T')),m=Math.floor((Date.now()-d)/6e4);return m<1?'<1m':m<60?m+'m':m<1440?Math.floor(m/60)+'h':Math.floor(m/1440)+'d'}catch(e){return'--'}}
 function ac(n){if(!AC[n])AC[n]=CP[Object.keys(AC).length%CP.length];return AC[n]}
-function kb(b){return(b/1024).toFixed(1)+'K'}
+function kb(b){return(b/1024).toFixed(1)}
 
 function render(d){
   var s=d.stats;
-  // header stats
-  document.getElementById('h-agents').textContent=s.activeAgents+'/'+s.totalAgents;
-  document.getElementById('h-cycles').textContent=s.totalCycles;
-  document.getElementById('h-entries').textContent=s.memoryEntries;
-  document.getElementById('h-brain').textContent=kb(s.brainSize);
-  document.getElementById('h-hot').textContent=s.hot;
-  document.getElementById('h-warm').textContent=s.warm;
-  document.getElementById('h-cold').textContent=s.cold;
-  document.getElementById('h-last').textContent=d.lastCycleTs?ago(d.lastCycleTs):'--';
-  document.getElementById('ag-count').textContent=s.totalAgents;
-  document.getElementById('fd-count').textContent=d.feed.length;
-  document.getElementById('me-count').textContent=d.fabricEntries.length;
-  document.getElementById('tm-days').textContent=Object.keys(d.timeline).length+'d';
 
-  // agents
+  // ribbon
+  document.getElementById('ribbon').innerHTML=
+    '<span class="k">AGENTS</span><span class="v">'+s.activeAgents+'/'+s.totalAgents+'</span><span class="sep">|</span>'+
+    '<span class="k">CYCLES</span><span class="v">'+s.totalCycles+'</span><span class="sep">|</span>'+
+    '<span class="k">ENTRIES</span><span class="v">'+s.memoryEntries+'</span><span class="sep">|</span>'+
+    '<span class="k">HOT</span><span class="v c-hi">'+s.hot+'</span>'+
+    '<span class="k">WARM</span><span class="v c-yl">'+s.warm+'</span>'+
+    '<span class="k">COLD</span><span class="v c-bl">'+s.cold+'</span><span class="sep">|</span>'+
+    '<span class="k">BRAIN</span><span class="v">'+kb(s.brainSize)+'K</span><span class="sep">|</span>'+
+    '<span class="k">LAST</span><span class="v">'+(d.lastCycleTs?ago(d.lastCycleTs):'--')+'</span>';
+
+  // panel counts
+  document.getElementById('p-ag-n').textContent=s.totalAgents;
+  document.getElementById('p-fd-n').textContent=d.feed.length+' events';
+  document.getElementById('p-me-n').textContent=d.fabricEntries.length+' entries';
+  document.getElementById('p-tm-n').textContent=Object.keys(d.timeline).length+' days';
+
+  // agents table
   var h='';d.agents.forEach(function(a){var c=ac(a.name);
-    h+='<div class="ag-row"><div class="ag-name" style="color:'+c+'">'+esc(a.name)+'</div><div class="ag-stat">'+(a.online?'<span class="up">ON</span>':'<span class="dn">OFF</span>')+'</div><div class="ag-role">'+esc(a.role)+'</div><div class="ag-plat">'+esc(a.lastPlatform||'--')+'</div><div class="ag-ts">'+ago(a.lastActive)+'</div></div>';
-  });document.getElementById('al').innerHTML=h;
+    h+='<tr><td><span class="led '+(a.online?'led-on':'led-off')+'"></span></td><td style="color:'+c+'">'+esc(a.name)+'</td><td>'+(a.online?'<span class="c-up">RUN</span>':'<span class="c-dn">OFF</span>')+'</td><td style="color:var(--t2);max-width:160px">'+esc(a.role)+'</td><td style="color:var(--t2)">'+esc(a.lastPlatform||'--')+'</td><td style="color:var(--t2)">'+ago(a.lastActive)+'</td></tr>';
+  });document.getElementById('ag-body').innerHTML=h;
 
-  // feed
-  h='';d.feed.forEach(function(f){var c=ac(f.agent);
-    h+='<div class="fd-row"><span class="fd-ts">'+ago(f.timestamp)+' </span><span class="fd-agent" style="color:'+c+'">'+esc(f.agent)+'</span> <span class="fd-cyc">#'+f.cycle+'</span><div class="fd-text">'+esc(f.thought||f.response)+'</div></div>';
+  // ticker feed: headline format
+  h='';
+  // current cycle
+  d.feed.forEach(function(f){var c=ac(f.agent);
+    h+='<div class="tick"><span class="tick-ts">'+ago(f.timestamp)+'</span><span class="tick-tag c-cyan">[INFO]</span><span class="tick-agent" style="color:'+c+'">'+esc(f.agent)+'</span><span class="tick-text">cycle '+f.cycle+': '+esc((f.thought||f.response||'').slice(0,120))+'</span></div>';
   });
-  // pad with all cycles from all agents if we have history
-  d.agents.forEach(function(a){
-    var c=ac(a.name);
-    a.cycles.slice().reverse().slice(0,8).forEach(function(cy){
-      h+='<div class="fd-row"><span class="fd-ts">'+ago(cy.timestamp)+' </span><span class="fd-agent" style="color:'+c+'">'+esc(a.name)+'</span> <span class="fd-cyc">#'+cy.cycle+'</span><div class="fd-text">'+esc(cy.thought||cy.response)+'</div></div>';
+  // history from all agents
+  d.agents.forEach(function(a){var c=ac(a.name);
+    a.cycles.slice().reverse().slice(0,6).forEach(function(cy){
+      var text=(cy.thought||cy.response||'').slice(0,120);
+      h+='<div class="tick"><span class="tick-ts">'+ago(cy.timestamp)+'</span><span class="tick-tag" style="color:var(--t2)">[LOG]</span><span class="tick-agent" style="color:'+c+'">'+esc(a.name)+'</span><span class="tick-text">'+esc(text)+'</span></div>';
     });
   });
-  document.getElementById('fd').innerHTML=h||'<div style="padding:6px;color:var(--t3)">NO DATA</div>';
+  document.getElementById('fd-body').innerHTML=h||'<div style="padding:8px;color:var(--t2)">NO DATA</div>';
 
-  // memory entries
-  h='';d.fabricEntries.slice(0,20).forEach(function(e){
-    var tc=e.tier==='hot'?'hi':e.tier==='warm'?'yl':'bl';
-    h+='<div class="me-row"><div class="me-tier '+tc+'">'+esc(e.tier).toUpperCase()+'</div><div class="me-type">'+esc(e.type||'--')+'</div><div class="me-agent" style="color:'+ac(e.agent)+'">'+esc(e.agent)+'</div><div class="me-body">'+esc(e.summary||e.body||'--')+'</div><div class="me-ts">'+ago(e.timestamp)+'</div></div>';
-  });document.getElementById('me').innerHTML=h;
+  // fabric entries table
+  h='';d.fabricEntries.slice(0,25).forEach(function(e){
+    var tc=e.tier==='hot'?'c-hi':e.tier==='warm'?'c-yl':'c-bl';
+    h+='<tr><td class="'+tc+'">'+esc(e.tier).toUpperCase()+'</td><td style="color:var(--t2)">'+esc(e.type||'--')+'</td><td style="color:'+ac(e.agent)+'">'+esc(e.agent)+'</td><td style="color:var(--t1);max-width:300px">'+esc(e.summary||e.body||'--')+'</td><td style="color:var(--t2)">'+ago(e.timestamp)+'</td></tr>';
+  });document.getElementById('me-body').innerHTML=h;
 
-  // right panel: tiers + platforms + compaction
+  // memory detail: recent entries expanded
+  h='';d.fabricEntries.slice(0,6).forEach(function(e){
+    h+='<div style="padding:4px 8px;border-bottom:1px solid #131313"><div style="display:flex;gap:6px;margin-bottom:2px"><span style="color:'+ac(e.agent)+'">'+esc(e.agent)+'</span><span style="color:var(--t2)">'+esc(e.platform)+'</span><span style="color:var(--t2)">'+esc(e.type)+'</span><span style="color:var(--t2);margin-left:auto">'+ago(e.timestamp)+'</span></div><div style="color:var(--t1);font-size:11px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">'+esc(e.body||e.summary||'--')+'</div></div>';
+  });document.getElementById('mem-detail').innerHTML=h||'<div style="padding:8px;color:var(--t2)">EMPTY</div>';
+
+  // system panel
   var t=Math.max(s.hot+s.warm+s.cold,1);
-  h='<div class="rt-section"><div class="rt-section-hd">TIER BREAKDOWN</div>';
-  h+='<div class="tier-row"><div class="tier-k hi">HOT</div><div class="tier-bar"><div class="tier-fill" style="width:'+(s.hot/t*100)+'%;background:var(--hi)"></div></div><div class="tier-n">'+s.hot+'</div></div>';
-  h+='<div class="tier-row"><div class="tier-k yl">WRM</div><div class="tier-bar"><div class="tier-fill" style="width:'+(s.warm/t*100)+'%;background:var(--yl)"></div></div><div class="tier-n">'+s.warm+'</div></div>';
-  h+='<div class="tier-row"><div class="tier-k bl">CLD</div><div class="tier-bar"><div class="tier-fill" style="width:'+(s.cold/t*100)+'%;background:var(--bl)"></div></div><div class="tier-n">'+s.cold+'</div></div>';
+  h='<div class="sys-sec"><div class="sys-hd">TIER ALLOCATION</div>';
+  [['HOT',s.hot,'var(--hi)'],['WARM',s.warm,'var(--yl)'],['COLD',s.cold,'var(--bl)']].forEach(function(r){
+    h+='<div class="sys-row"><span class="sys-k" style="color:'+r[2]+'">'+r[0]+'</span><div class="sys-bar"><div class="sys-fill" style="width:'+(r[1]/t*100)+'%;background:'+r[2]+'"></div></div><span class="sys-v">'+r[1]+'</span></div>';
+  });
   h+='</div>';
 
-  h+='<div class="rt-section"><div class="rt-section-hd">PLATFORMS</div>';
+  h+='<div class="sys-sec"><div class="sys-hd">PLATFORM STATUS</div>';
   var seen={};d.agents.forEach(function(a){a.platforms.forEach(function(p){
     var k=a.name+p.name;if(seen[k])return;seen[k]=1;var on=p.state==='connected';
-    h+='<div class="plat-row"><div class="plat-dot" style="background:'+(on?'var(--up)':'var(--dn)')+'"></div><div class="plat-name" style="color:'+ac(a.name)+'">'+esc(a.name)+'</div><div class="plat-badge">'+esc(p.name)+'</div><div class="plat-state '+(on?'up':'dn')+'">'+p.state.toUpperCase()+'</div></div>';
+    h+='<div class="sys-row"><span class="led '+(on?'led-on':'led-off')+'"></span><span style="width:64px;color:'+ac(a.name)+'">'+esc(a.name)+'</span><span style="width:56px;color:var(--t2)">'+esc(p.name)+'</span><span style="flex:1;text-align:right;color:'+(on?'var(--up)':'var(--dn)')+'">'+p.state.toUpperCase()+'</span></div>';
   })});
-  if(!Object.keys(seen).length) h+='<div style="color:var(--t3);padding:2px 0">NONE</div>';
+  if(!Object.keys(seen).length)h+='<div style="color:var(--t2);padding:2px 0">NONE CONFIGURED</div>';
   h+='</div>';
 
-  h+='<div class="rt-section"><div class="rt-section-hd">COMPACTION</div>';
+  h+='<div class="sys-sec"><div class="sys-hd">COMPACTION LOG</div>';
   if(d.compaction.length){d.compaction.forEach(function(c){
-    h+='<div class="cmp-row"><span class="cmp-ts">'+esc(c.timestamp)+'</span> '+c.details.map(esc).join(' ')+'</div>';
-  })}else{h+='<div style="color:var(--t3);padding:2px 0">NONE</div>'}
+    h+='<div style="padding:1px 0;color:var(--t2);font-size:10px"><span style="color:var(--t2)">'+esc(c.timestamp)+'</span> '+c.details.map(esc).join(' ')+'</div>';
+  })}else{h+='<div style="color:var(--t2);padding:2px 0;font-size:10px">NO COMPACTION EVENTS</div>'}
   h+='</div>';
-  document.getElementById('rt').innerHTML=h;
+
+  h+='<div class="sys-sec"><div class="sys-hd">BRAIN STATS</div>';
+  h+='<div class="sys-row"><span class="sys-k" style="color:var(--t2)">SIZE</span><span style="flex:1;color:var(--t0)">'+kb(s.brainSize)+' KB</span></div>';
+  h+='<div class="sys-row"><span class="sys-k" style="color:var(--t2)">FILES</span><span style="flex:1;color:var(--t0)">'+s.memoryEntries+'</span></div>';
+  h+='<div class="sys-row"><span class="sys-k" style="color:var(--t2)">AGENTS</span><span style="flex:1;color:var(--t0)">'+s.allPlatforms.length+' platforms across '+s.totalAgents+' agents</span></div>';
+  h+='</div>';
+
+  document.getElementById('sys-body').innerHTML=h;
 
   // chart
   var cv=document.getElementById('cv'),cx=cv.getContext('2d');
-  var W=cv.parentElement.clientWidth,H=cv.parentElement.clientHeight-2;
+  var W=cv.parentElement.clientWidth,H=cv.parentElement.clientHeight;
   cv.width=W;cv.height=H;cx.clearRect(0,0,W,H);
   var days=Object.keys(d.timeline).sort();
-  if(days.length<2){cx.fillStyle='#383838';cx.font='10px monospace';cx.fillText('COLLECTING DATA',W/2-50,H/2);return}
+  if(days.length<2){cx.fillStyle='#525252';cx.font='10px IBM Plex Mono';cx.fillText('COLLECTING DATA...',W/2-60,H/2);return}
   var agents=[...new Set(d.fabricEntries.map(function(e){return e.agent}))],mx=1;
   days.forEach(function(dy){agents.forEach(function(a){mx=Math.max(mx,(d.timeline[dy]||{})[a]||0)})});
+  var pL=32,pR=8,pT=8,pB=16,gW=W-pL-pR,gH=H-pT-pB;
   // grid
   cx.strokeStyle='#1a1a1a';cx.lineWidth=0.5;
-  for(var i=0;i<=4;i++){var y=4+(H-20)/4*i;cx.beginPath();cx.moveTo(30,y);cx.lineTo(W-4,y);cx.stroke()}
+  for(var i=0;i<=4;i++){var y=pT+gH/4*i;cx.beginPath();cx.moveTo(pL,y);cx.lineTo(W-pR,y);cx.stroke()}
   // y labels
-  cx.fillStyle='#383838';cx.font='9px monospace';
-  for(var i=0;i<=4;i++){var v=Math.round(mx-mx/4*i);cx.fillText(v,2,8+(H-20)/4*i)}
+  cx.fillStyle='#525252';cx.font='9px IBM Plex Mono';
+  for(var i=0;i<=4;i++){var v=Math.round(mx-mx/4*i);cx.fillText(v,2,pT+4+gH/4*i)}
   // lines
   agents.forEach(function(ag){
-    cx.strokeStyle=ac(ag);cx.lineWidth=1;cx.beginPath();
+    cx.strokeStyle=ac(ag);cx.lineWidth=1.5;cx.beginPath();
     days.forEach(function(dy,di){
-      var px=30+(di/(days.length-1))*(W-34),v=(d.timeline[dy]||{})[ag]||0,py=4+(H-20)-(v/mx)*(H-20);
+      var px=pL+(di/(days.length-1))*gW,v=(d.timeline[dy]||{})[ag]||0,py=pT+gH-(v/mx)*gH;
       di===0?cx.moveTo(px,py):cx.lineTo(px,py);
     });cx.stroke();
+    // dots
+    days.forEach(function(dy,di){
+      var px=pL+(di/(days.length-1))*gW,v=(d.timeline[dy]||{})[ag]||0,py=pT+gH-(v/mx)*gH;
+      if(v>0){cx.fillStyle=ac(ag);cx.fillRect(px-1.5,py-1.5,3,3)}
+    });
   });
   // x labels
-  cx.fillStyle='#383838';cx.font='9px monospace';
-  cx.fillText(days[0],30,H-2);
-  if(days.length>1)cx.fillText(days[days.length-1],W-70,H-2);
-
-  // footer clock
-  document.getElementById('ft-time').textContent=new Date().toISOString().slice(0,19).replace('T',' ')+' UTC';
+  cx.fillStyle='#525252';cx.font='9px IBM Plex Mono';
+  cx.fillText(days[0],pL,H-2);
+  cx.fillText(days[days.length-1],W-pR-70,H-2);
+  // legend
+  var lx=pL;agents.forEach(function(ag){
+    cx.fillStyle=ac(ag);cx.fillRect(lx,H-14,6,6);
+    cx.fillStyle='#525252';cx.fillText(ag,lx+10,H-8);
+    lx+=cx.measureText(ag).width+20;
+  });
 }
 
 function act(n){fetch('/api/action/'+n,{method:'POST'}).then(function(r){return r.json()}).then(function(r){console.log(r)})}
+
+// command bar
+document.getElementById('cmd').addEventListener('keydown',function(e){
+  if(e.key==='Enter'){
+    var v=this.value.trim().toLowerCase();
+    if(v==='run'||v==='cycle')act('cycle');
+    else if(v==='compact')act('compact');
+    else if(v==='help')alert('Commands: run, compact, help');
+    this.value='';
+  }
+});
+
+// keyboard shortcuts
+document.addEventListener('keydown',function(e){
+  if(e.target.tagName==='INPUT')return;
+  if(e.key==='F1'){e.preventDefault();act('cycle')}
+  if(e.key==='F2'){e.preventDefault();act('compact')}
+});
+
+// clock
+function clock(){
+  var n=new Date();
+  document.getElementById('h-clock').textContent=n.toISOString().slice(11,19)+' UTC';
+  document.getElementById('ft-ts').textContent=n.toISOString().slice(0,10)+' '+n.toISOString().slice(11,19)+' UTC';
+}
+clock();setInterval(clock,1000);
+
+// data
 fetch('/api/data').then(function(r){return r.json()}).then(render);
 var sse=new EventSource('/api/stream');
 sse.onmessage=function(e){render(JSON.parse(e.data))};
-sse.onerror=function(){document.getElementById('h-live').className='dn';document.getElementById('h-live').textContent='DISCONNECTED'};
-sse.onopen=function(){document.getElementById('h-live').className='live';document.getElementById('h-live').textContent='LIVE'};
-setInterval(function(){document.getElementById('ft-time').textContent=new Date().toISOString().slice(0,19).replace('T',' ')+' UTC'},1000);
+sse.onerror=function(){document.getElementById('h-live').className='c-dn';document.getElementById('h-live').textContent='DISCONNECTED'};
+sse.onopen=function(){document.getElementById('h-live').className='live';document.getElementById('h-live').textContent='CONNECTED'};
 </script>
 </body>
 </html>
