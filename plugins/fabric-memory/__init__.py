@@ -47,8 +47,10 @@ def _write_entry(agent, platform, entry_type, content, summary=""):
     filename = f"{agent}-{entry_type}-{ts}-{suffix}.md"
     filepath = FABRIC_DIR / filename
 
+    entry_id = secrets.token_hex(4)
     lines = [
         "---",
+        f"id: {entry_id}",
         f"agent: {agent}",
         f"platform: {platform}",
         f"timestamp: {ts_iso}",

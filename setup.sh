@@ -76,9 +76,9 @@ for i in $(seq 1 "$AGENT_COUNT"); do
         [ -z "$ANAME" ] && fail "name required"
     fi
 
-    if [ "$ANAME" = "icarus" ] && [ -f "$SCRIPT_DIR/icarus-SOUL.md" ]; then
+    if [ "$ANAME" = "icarus" ] && [ -f "$SCRIPT_DIR/examples/hermes-demo/icarus-SOUL.md" ]; then
         AROLE="creative coder, writes fast, builds from instinct"
-    elif [ "$ANAME" = "daedalus" ] && [ -f "$SCRIPT_DIR/daedalus-SOUL.md" ]; then
+    elif [ "$ANAME" = "daedalus" ] && [ -f "$SCRIPT_DIR/examples/hermes-demo/daedalus-SOUL.md" ]; then
         AROLE="code reviewer, precise, architectural, builds from knowledge"
     else
         ask "  $ANAME role (one line): "
@@ -362,10 +362,10 @@ for i in $(seq 0 $((AGENT_COUNT - 1))); do
     mkdir -p "$h"/{cron,sessions,logs,memories,skills,hooks}
 
     # SOUL.md
-    if [ "$n" = "icarus" ] && [ -f "$SCRIPT_DIR/icarus-SOUL.md" ]; then
-        cp "$SCRIPT_DIR/icarus-SOUL.md" "$h/SOUL.md"
-    elif [ "$n" = "daedalus" ] && [ -f "$SCRIPT_DIR/daedalus-SOUL.md" ]; then
-        cp "$SCRIPT_DIR/daedalus-SOUL.md" "$h/SOUL.md"
+    if [ "$n" = "icarus" ] && [ -f "$SCRIPT_DIR/examples/hermes-demo/icarus-SOUL.md" ]; then
+        cp "$SCRIPT_DIR/examples/hermes-demo/icarus-SOUL.md" "$h/SOUL.md"
+    elif [ "$n" = "daedalus" ] && [ -f "$SCRIPT_DIR/examples/hermes-demo/daedalus-SOUL.md" ]; then
+        cp "$SCRIPT_DIR/examples/hermes-demo/daedalus-SOUL.md" "$h/SOUL.md"
     else
         echo "You are $n. $r." > "$h/SOUL.md"
     fi
