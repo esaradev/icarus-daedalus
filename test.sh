@@ -148,8 +148,11 @@ echo ""
 # Clean test entries (remove earlier ones from yaml test)
 rm -f "$T/fabric/multiline-test.md" "$T/fabric/inline-test.md"
 
-# Create entries using agent:cycle refs (the documented format)
-# Target entry: alice cycle 8
+# ── Scenario: original (cycle 8), review, unrelated decoy, real fix ──
+# This is the exact case Codex reproduced where an unrelated later
+# entry from the same author was incorrectly selected as the revision.
+
+# Target entry: alice cycle 8 (the original work)
 cat > "$T/fabric/alice-code-001.md" << 'EOF'
 ---
 agent: alice
@@ -164,7 +167,7 @@ summary: built rate limiter
 Built a rate limiter with sliding window.
 EOF
 
-# Decoy: alice cycle 5 (should NOT be selected)
+# Decoy original: alice cycle 5 (wrong cycle, should not match ref alice:8)
 cat > "$T/fabric/alice-code-decoy.md" << 'EOF'
 ---
 agent: alice
@@ -179,7 +182,7 @@ summary: decoy older task
 This is an older unrelated task. Should not be paired.
 EOF
 
-# Review referencing alice:8 specifically
+# Review referencing alice:8
 cat > "$T/fabric/bob-review-002.md" << 'EOF'
 ---
 agent: bob
@@ -194,7 +197,21 @@ summary: reviewed rate limiter
 MUST FIX: race condition in counter.
 EOF
 
-# Revision: alice after the review
+# Decoy revision: alice's UNRELATED later entry (no refs back, should be skipped)
+cat > "$T/fabric/alice-research-decoy.md" << 'EOF'
+---
+agent: alice
+platform: slack
+timestamp: 2026-03-28T11:30:00Z
+type: research
+tier: hot
+summary: researched postgres indexes
+---
+
+Researched postgres partial indexes for query optimization.
+EOF
+
+# Real fix: alice refs back to the review (bob) explicitly
 cat > "$T/fabric/alice-fix-003.md" << 'EOF'
 ---
 agent: alice
@@ -203,7 +220,8 @@ timestamp: 2026-03-28T12:00:00Z
 type: code-session
 tier: hot
 cycle: 9
-summary: fixed rate limiter
+refs: [bob:11]
+summary: fixed rate limiter after review
 ---
 
 Fixed the race condition. Moved zadd after zcard.
@@ -224,18 +242,22 @@ pairs, rev, xp = mod.extract_pairs(entries)
 rc = [p for p in pairs if p['metadata'].get('type') == 'review-correction']
 assert len(rc) == 1, f'expected 1 review-correction pair, got {len(rc)}'
 
-# Verify the original was alice:8 (rate limiter), not alice:5 (decoy)
-assert 'rate limiter' in rc[0]['input'].lower() or 'sliding window' in rc[0]['input'].lower(), \
+# Verify the original was alice:8 (rate limiter), not decoy cycle 5
+assert 'sliding window' in rc[0]['input'].lower(), \
     f'original should be the rate limiter (cycle 8), got: {rc[0][\"input\"][:100]}'
 assert 'decoy' not in rc[0]['input'].lower(), \
-    f'decoy entry (cycle 5) was incorrectly selected: {rc[0][\"input\"][:100]}'
+    f'decoy original (cycle 5) selected: {rc[0][\"input\"][:100]}'
 
-# Verify the output is the fix, not the original
+# Verify the output is the real fix, not the postgres research decoy
 assert 'zadd' in rc[0]['output'].lower() or 'fixed' in rc[0]['output'].lower(), \
     f'output should be the fix, got: {rc[0][\"output\"][:100]}'
+assert 'postgres' not in rc[0]['output'].lower(), \
+    f'unrelated research entry selected as revision: {rc[0][\"output\"][:100]}'
 
 print('  pass: review-correction uses agent:cycle matching')
-print('  pass: decoy entry (wrong cycle) not selected')
+print('  pass: decoy original (wrong cycle) not selected')
+print('  pass: unrelated later entry not selected as revision')
+print('  pass: only explicitly-linked revision used')
 " || fail "export ref matching"
 
 echo ""

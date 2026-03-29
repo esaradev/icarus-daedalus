@@ -71,6 +71,40 @@ def scan_all():
     return entries
 
 
+def _resolve_ref(ref, entries):
+    """Resolve a ref string (agent:id) to a specific entry.
+
+    Checks in priority order:
+    1. id field match (exact)
+    2. agent:cycle match
+    3. agent:timestamp substring
+    4. agent:filename substring
+    First match wins. Returns None if unresolvable.
+    """
+    if ":" not in ref:
+        return None
+    ref_agent, ref_id = ref.split(":", 1)
+    if not ref_agent or not ref_id:
+        return None
+    # 1. Exact id field match
+    for o in entries:
+        if o.get("agent") == ref_agent and str(o.get("id", "")) == str(ref_id):
+            return o
+    # 2. Cycle field match
+    for o in entries:
+        if o.get("agent") == ref_agent and str(o.get("cycle", "")) == str(ref_id):
+            return o
+    # 3. Timestamp substring match
+    for o in entries:
+        if o.get("agent") == ref_agent and str(ref_id) in str(o.get("timestamp", "")):
+            return o
+    # 4. Filename substring match
+    for o in entries:
+        if o.get("agent") == ref_agent and str(ref_id) in o.get("file", ""):
+            return o
+    return None
+
+
 def estimate_tokens(text):
     """Rough token estimate: ~4 chars per token."""
     return len(text) // 4
@@ -136,64 +170,57 @@ def extract_pairs(entries):
             user_msg = f"[{entry_type or 'task'}] {summary or 'Complete this task'}"
             pairs.append(make_pair(user_msg, body, {"type": "basic", "agent": agent, "platform": platform}))
 
-        # ── REVIEW PAIRS: only pair explicitly linked entries ──
+        # ── Parse refs ──
         refs = e.get("refs", [])
         if isinstance(refs, str):
             refs = [r.strip() for r in refs.split(",") if r.strip()]
 
+        # ── REVIEW PAIRS: only pair explicitly linked entries ──
         if entry_type == "review" and refs:
             for ref in refs:
-                ref_agent, ref_id = (ref.split(":", 1) + [""])[:2] if ":" in ref else (ref, "")
-                if not ref_agent or not ref_id:
+                orig = _resolve_ref(ref, entries)
+                if not orig:
                     continue
-                # Resolve ref in priority order: cycle > timestamp > filename
-                orig = None
-                # 1. Match agent:cycle against entries with a cycle field
-                cycle_matches = [o for o in entries
-                    if o.get("agent") == ref_agent
-                    and str(o.get("cycle", "")) == str(ref_id)]
-                if cycle_matches:
-                    orig = cycle_matches[0]
-                # 2. Match agent:timestamp substring
-                if not orig:
-                    ts_matches = [o for o in entries
-                        if o.get("agent") == ref_agent
-                        and str(ref_id) in str(o.get("timestamp", ""))]
-                    if ts_matches:
-                        orig = ts_matches[0]
-                # 3. Match agent:filename substring
-                if not orig:
-                    file_matches = [o for o in entries
-                        if o.get("agent") == ref_agent
-                        and str(ref_id) in o.get("file", "")]
-                    if file_matches:
-                        orig = file_matches[0]
-                if not orig:
-                    continue  # can't resolve ref, skip entirely
-                # Find a subsequent entry from the same agent that came AFTER this review
-                review_ts = e.get("timestamp", "")
-                improved = [o for o in entries
-                    if o.get("agent") == ref_agent
-                    and o.get("timestamp", "") > review_ts
-                    and o.get("file") != orig.get("file")]
+                # Find revision: must explicitly ref back to the review or original
+                review_file = e.get("file", "")
+                orig_file = orig.get("file", "")
+                ref_agent = ref.split(":")[0] if ":" in ref else ""
+                improved = None
+                for candidate in entries:
+                    if candidate.get("agent") != ref_agent:
+                        continue
+                    if candidate.get("timestamp", "") <= e.get("timestamp", ""):
+                        continue
+                    if candidate.get("file") == orig_file:
+                        continue
+                    # candidate must ref back to the review or original
+                    cand_refs = candidate.get("refs", [])
+                    if isinstance(cand_refs, str):
+                        cand_refs = [r.strip() for r in cand_refs.split(",") if r.strip()]
+                    refs_back = False
+                    for cr in cand_refs:
+                        resolved = _resolve_ref(cr, [e, orig])
+                        if resolved:
+                            refs_back = True
+                            break
+                    if refs_back:
+                        improved = candidate
+                        break
                 if not improved:
-                    continue  # no revision found, skip
+                    continue
                 user_msg = f"[self-correct] Original work:\n{orig.get('body', '')[:300]}\n\nReview feedback:\n{body[:300]}\n\nProvide the improved version."
-                pairs.append(make_pair(user_msg, improved[0].get("body", ""), {"type": "review-correction", "reviewer": agent, "author": ref_agent}))
+                pairs.append(make_pair(user_msg, improved.get("body", ""), {"type": "review-correction", "reviewer": agent, "author": ref_agent}))
                 review_pairs += 1
 
-        # ── CROSS-PLATFORM PAIRS: only from explicitly referenced agents ──
+        # ── CROSS-PLATFORM PAIRS: resolve ref to specific entry ──
         if refs and platform:
             for ref in refs:
-                ref_agent = ref.split(":")[0] if ":" in ref else ""
-                if not ref_agent:
+                source = _resolve_ref(ref, entries)
+                if not source:
                     continue
-                # Find entries from the referenced agent on a DIFFERENT platform
-                xplat = [o for o in entries if o.get("agent") == ref_agent and o.get("platform") != platform and o.get("platform")]
-                if not xplat:
-                    continue
-                source = xplat[0]
-                src_plat = source.get("platform", "?")
+                src_plat = source.get("platform", "")
+                if not src_plat or src_plat == platform:
+                    continue  # same platform, not cross-platform
                 user_msg = f"[cross-platform context] Memory from {src_plat}:\n{source.get('body', '')[:300]}\n\nYou are on {platform}. Use this context in your response."
                 pairs.append(make_pair(user_msg, body, {"type": "cross-platform", "source_platform": src_plat, "target_platform": platform, "agent": agent}))
                 xplat_pairs += 1

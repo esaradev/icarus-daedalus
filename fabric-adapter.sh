@@ -12,8 +12,10 @@ fabric_write() {
     local ts=$(date -u '+%Y-%m-%dT%H%MZ')
     local ts_iso=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     local suffix=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 4)
+    local entry_id=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 8)
     local fp="$FABRIC_DIR/${agent}-${type}-${ts}-${suffix}.md"
     { echo "---"
+      echo "id: $entry_id"
       echo "agent: $agent"
       echo "platform: $platform"
       echo "timestamp: $ts_iso"

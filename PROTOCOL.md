@@ -40,7 +40,8 @@ Key tension: whether structures protect or imprison.
 
 | Field | Type | Description |
 |---|---|---|
-| `refs` | array | Cross-references as `agent:cycle` strings |
+| `id` | string | Unique entry ID (8 hex chars). When present, refs should use `agent:id` for exact matching. |
+| `refs` | array | Cross-references as `agent:id`, `agent:cycle`, or `agent:timestamp` strings. Resolved in that priority order. |
 | `tags` | array | Freeform tags for search |
 | `summary` | string | One-line summary for index |
 | `cycle` | integer | Cycle number if part of a dialogue loop |
