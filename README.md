@@ -142,8 +142,6 @@ curator.py           re-tiers entries by age, compacts with Claude, builds index
 compact.sh           self-reflecting log compaction before each dialogue cycle
 relay.py             SQLite message relay for agent-to-agent messaging
 setup.sh             setup wizard -- hermes install, platform config, test cycle
-dashboard.js         web dashboard at localhost:3000
-dashboard.html       dashboard frontend
 boot.sh              startup animation
 test.sh              tests -- fabric write/read/search, curator, dialogue integration
 icarus-SOUL.md       icarus personality
