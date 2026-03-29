@@ -145,41 +145,64 @@ echo ""
 echo "export-training ref matching"
 echo ""
 
-# Create linked entries to test explicit ref matching
-cat > "$T/fabric/author-task-001.md" << 'EOF'
+# Clean test entries (remove earlier ones from yaml test)
+rm -f "$T/fabric/multiline-test.md" "$T/fabric/inline-test.md"
+
+# Create entries using agent:cycle refs (the documented format)
+# Target entry: alice cycle 8
+cat > "$T/fabric/alice-code-001.md" << 'EOF'
 ---
 agent: alice
 platform: slack
 timestamp: 2026-03-28T10:00:00Z
 type: code-session
 tier: hot
+cycle: 8
 summary: built rate limiter
 ---
 
 Built a rate limiter with sliding window.
 EOF
 
-cat > "$T/fabric/reviewer-review-002.md" << 'EOF'
+# Decoy: alice cycle 5 (should NOT be selected)
+cat > "$T/fabric/alice-code-decoy.md" << 'EOF'
+---
+agent: alice
+platform: slack
+timestamp: 2026-03-27T08:00:00Z
+type: code-session
+tier: hot
+cycle: 5
+summary: decoy older task
+---
+
+This is an older unrelated task. Should not be paired.
+EOF
+
+# Review referencing alice:8 specifically
+cat > "$T/fabric/bob-review-002.md" << 'EOF'
 ---
 agent: bob
 platform: telegram
 timestamp: 2026-03-28T11:00:00Z
 type: review
 tier: hot
-refs: [alice:10:00]
+refs: [alice:8]
 summary: reviewed rate limiter
 ---
 
 MUST FIX: race condition in counter.
 EOF
 
-cat > "$T/fabric/author-fix-003.md" << 'EOF'
+# Revision: alice after the review
+cat > "$T/fabric/alice-fix-003.md" << 'EOF'
 ---
 agent: alice
 platform: slack
 timestamp: 2026-03-28T12:00:00Z
 type: code-session
 tier: hot
+cycle: 9
 summary: fixed rate limiter
 ---
 
@@ -187,7 +210,6 @@ Fixed the race condition. Moved zadd after zcard.
 EOF
 
 python3 -c "
-import json
 from pathlib import Path
 import importlib.util, os
 os.environ['FABRIC_DIR'] = '$T/fabric'
@@ -199,12 +221,21 @@ spec.loader.exec_module(mod)
 entries = mod.scan_all()
 pairs, rev, xp = mod.extract_pairs(entries)
 
-# Check that review-correction pairs reference the actual linked entries
 rc = [p for p in pairs if p['metadata'].get('type') == 'review-correction']
-# Should find 0 or 1 pair (the ref alice:10:00 must match something)
-# The ref format alice:10:00 should try to match timestamp containing 10:00
-print(f'  review-correction pairs: {len(rc)} (expected 0-1, depends on ref resolution)')
-print('  pass: export uses explicit ref matching')
+assert len(rc) == 1, f'expected 1 review-correction pair, got {len(rc)}'
+
+# Verify the original was alice:8 (rate limiter), not alice:5 (decoy)
+assert 'rate limiter' in rc[0]['input'].lower() or 'sliding window' in rc[0]['input'].lower(), \
+    f'original should be the rate limiter (cycle 8), got: {rc[0][\"input\"][:100]}'
+assert 'decoy' not in rc[0]['input'].lower(), \
+    f'decoy entry (cycle 5) was incorrectly selected: {rc[0][\"input\"][:100]}'
+
+# Verify the output is the fix, not the original
+assert 'zadd' in rc[0]['output'].lower() or 'fixed' in rc[0]['output'].lower(), \
+    f'output should be the fix, got: {rc[0][\"output\"][:100]}'
+
+print('  pass: review-correction uses agent:cycle matching')
+print('  pass: decoy entry (wrong cycle) not selected')
 " || fail "export ref matching"
 
 echo ""

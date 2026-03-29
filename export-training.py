@@ -146,13 +146,30 @@ def extract_pairs(entries):
                 ref_agent, ref_id = (ref.split(":", 1) + [""])[:2] if ":" in ref else (ref, "")
                 if not ref_agent or not ref_id:
                     continue
-                # Find the SPECIFIC entry being reviewed by matching agent + cycle/id
-                originals = [o for o in entries
+                # Resolve ref in priority order: cycle > timestamp > filename
+                orig = None
+                # 1. Match agent:cycle against entries with a cycle field
+                cycle_matches = [o for o in entries
                     if o.get("agent") == ref_agent
-                    and (str(ref_id) in o.get("file", "") or str(ref_id) in str(o.get("timestamp", "")))]
-                if not originals:
+                    and str(o.get("cycle", "")) == str(ref_id)]
+                if cycle_matches:
+                    orig = cycle_matches[0]
+                # 2. Match agent:timestamp substring
+                if not orig:
+                    ts_matches = [o for o in entries
+                        if o.get("agent") == ref_agent
+                        and str(ref_id) in str(o.get("timestamp", ""))]
+                    if ts_matches:
+                        orig = ts_matches[0]
+                # 3. Match agent:filename substring
+                if not orig:
+                    file_matches = [o for o in entries
+                        if o.get("agent") == ref_agent
+                        and str(ref_id) in o.get("file", "")]
+                    if file_matches:
+                        orig = file_matches[0]
+                if not orig:
                     continue  # can't resolve ref, skip entirely
-                orig = originals[0]
                 # Find a subsequent entry from the same agent that came AFTER this review
                 review_ts = e.get("timestamp", "")
                 improved = [o for o in entries
