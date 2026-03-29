@@ -28,7 +28,7 @@ Do NOT write trivial things (greetings, one-word answers, status checks).
 Use smart retrieval to find relevant memories. This ranks entries by keyword match, project, agent, recency, and type -- not just recency.
 
 ```bash
-python3 ~/icarus-daedalus/fabric-retrieve.py "billing issue" --max-results 5
+python3 $ICARUS_DIR/fabric-retrieve.py "billing issue" --max-results 5
 ```
 
 This returns the top 5 most relevant entries with relevance scores. Use this instead of fabric_read when you need specific context.
@@ -43,14 +43,14 @@ Options:
 
 For a full dump of recent memories (less precise, more complete):
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_read "" "hot"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_read "" "hot"
 ```
 
 ## When to search (keyword)
 
 For keyword-based file search:
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_search "query terms"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_search "query terms"
 ```
 
 ## Commands
@@ -60,7 +60,7 @@ source ~/icarus-daedalus/fabric-adapter.sh && fabric_search "query terms"
 Replace the values in quotes. Keep the summary short (one line).
 
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_write "YOUR_AGENT_NAME" "PLATFORM" "TYPE" "CONTENT" "hot" "" "tag1, tag2" "one-line summary"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_write "YOUR_AGENT_NAME" "PLATFORM" "TYPE" "CONTENT" "hot" "" "tag1, tag2" "one-line summary"
 ```
 
 Arguments:
@@ -77,19 +77,19 @@ Arguments:
 
 ```bash
 # All hot memories from all agents
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_read "" "hot"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_read "" "hot"
 
 # Only your memories
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_read "YOUR_AGENT_NAME" "hot"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_read "YOUR_AGENT_NAME" "hot"
 
 # Warm tier (1-7 days old)
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_read "" "warm"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_read "" "warm"
 ```
 
 ### Search memories
 
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_search "websocket"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_search "websocket"
 ```
 
 Returns file paths. Read the files to see content:
@@ -120,17 +120,17 @@ Built a WebSocket pub/sub broker in Node. Daedalus reviewed it and found missing
 
 After completing a code review:
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_write "daedalus" "telegram" "review" "Reviewed rate limiter middleware. MUST FIX: race condition in sliding window counter. SHOULD FIX: no Redis connection retry. Code needs rework before shipping." "hot" "icarus:3" "rate-limiter, express, review" "rate limiter code review"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_write "daedalus" "telegram" "review" "Reviewed rate limiter middleware. MUST FIX: race condition in sliding window counter. SHOULD FIX: no Redis connection retry. Code needs rework before shipping." "hot" "icarus:3" "rate-limiter, express, review" "rate limiter code review"
 ```
 
 After a research session:
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_write "icarus" "slack" "research" "Investigated WebSocket scaling options. Found that Redis pub/sub handles cross-server message routing. Socket.io has built-in Redis adapter. Recommended approach: sticky sessions + Redis adapter." "hot" "" "websocket, scaling, redis" "websocket scaling research"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_write "icarus" "slack" "research" "Investigated WebSocket scaling options. Found that Redis pub/sub handles cross-server message routing. Socket.io has built-in Redis adapter. Recommended approach: sticky sessions + Redis adapter." "hot" "" "websocket, scaling, redis" "websocket scaling research"
 ```
 
 After a conversation with another agent:
 ```bash
-source ~/icarus-daedalus/fabric-adapter.sh && fabric_write "icarus" "telegram" "dialogue" "Debated framework choice with Daedalus. He pushed for Fastify over Express citing 3x throughput. I argued Express ecosystem is more battle-tested. Agreed to benchmark both before deciding." "hot" "daedalus:12" "fastify, express, framework" "framework debate with daedalus"
+source $ICARUS_DIR/fabric-adapter.sh && fabric_write "icarus" "telegram" "dialogue" "Debated framework choice with Daedalus. He pushed for Fastify over Express citing 3x throughput. I argued Express ecosystem is more battle-tested. Agreed to benchmark both before deciding." "hot" "daedalus:12" "fastify, express, framework" "framework debate with daedalus"
 ```
 
 ## Rules

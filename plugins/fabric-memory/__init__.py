@@ -180,7 +180,7 @@ def _retrieve_relevant(query, agent=None, limit=5, max_tokens=1500):
     for s, e in deduped[:limit]:
         tokens = len(e.get("body", "")) // 4
         if tokens > budget:
-            break
+            continue  # skip oversized, try next entry
         budget -= tokens
         result.append(e)
 
@@ -194,9 +194,10 @@ _pending_query = ""
 def _on_session_start(session_id="", platform="", **kwargs):
     """Initialize session. Actual context injection happens on first pre_llm_call
     when we have the user's actual message to query against."""
-    global _session_exchanges, _pending_query
+    global _session_exchanges, _pending_query, _first_turn_done
     _session_exchanges = []
     _pending_query = ""
+    _first_turn_done = False
 
     # Load a minimal set of recent entries as baseline context
     agent = AGENT_NAME or "agent"

@@ -494,6 +494,12 @@ grep -q "python3 -c" "$SCRIPT_DIR/scripts/self-train.sh" && grep -q "json.dumps"
 # Test: setup.sh copies fabric-retrieve.py into plugin dir
 grep -q "fabric-retrieve.py" "$SCRIPT_DIR/setup.sh" && pass "setup copies retrieval helper" || fail "setup missing retrieval copy"
 
+# Test: plugin resets _first_turn_done on session start
+grep -q "_first_turn_done = False" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin resets _first_turn_done" || fail "plugin never resets _first_turn_done"
+
+# Test: plugin skips oversized entries (continue not break)
+grep -q "continue.*skip oversized" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin skips oversized entries" || fail "plugin breaks on oversized"
+
 # Test: plugin.yaml declares pre_llm_call
 grep -q "pre_llm_call" "$SCRIPT_DIR/plugins/fabric-memory/plugin.yaml" && pass "plugin.yaml declares pre_llm_call" || fail "plugin.yaml missing pre_llm_call"
 
