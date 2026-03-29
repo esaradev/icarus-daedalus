@@ -37,8 +37,14 @@ DECISION_PATTERNS = [
 ]
 
 
-def _write_entry(agent, platform, entry_type, content, summary=""):
-    """Write a fabric entry. Returns the file path."""
+# Session state set by hooks
+_current_session_id = ""
+_current_project_id = ""
+
+
+def _write_entry(agent, platform, entry_type, content, summary="",
+                 review_of="", revises="", customer_id="", status="", outcome=""):
+    """Write a fabric entry with schema v1 fields. Returns the file path."""
     FABRIC_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
     ts = now.strftime("%Y-%m-%dT%H%MZ")
@@ -48,8 +54,13 @@ def _write_entry(agent, platform, entry_type, content, summary=""):
     filepath = FABRIC_DIR / filename
 
     entry_id = secrets.token_hex(4)
-    project_id = os.environ.get("FABRIC_PROJECT_ID", "unknown")
-    session_id = os.environ.get("FABRIC_SESSION_ID", f"sess-{now.strftime('%Y%m%d-%H%M')}-{os.getpid()}")
+    # Use hook-provided session_id, then env, then generate
+    session_id = _current_session_id or os.environ.get(
+        "FABRIC_SESSION_ID", f"sess-{now.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}")
+    # Use hook-provided project or env or cwd
+    project_id = _current_project_id or os.environ.get(
+        "FABRIC_PROJECT_ID", Path.cwd().name if Path.cwd() != Path.home() else "unknown")
+
     lines = [
         "---",
         f"id: {entry_id}",
@@ -62,6 +73,16 @@ def _write_entry(agent, platform, entry_type, content, summary=""):
         f"project_id: {project_id}",
         f"session_id: {session_id}",
     ]
+    if review_of:
+        lines.append(f"review_of: {review_of}")
+    if revises:
+        lines.append(f"revises: {revises}")
+    if customer_id:
+        lines.append(f"customer_id: {customer_id}")
+    if status:
+        lines.append(f"status: {status}")
+    if outcome:
+        lines.append(f"outcome: {outcome}")
     lines.extend(["---", "", content])
     filepath.write_text("\n".join(lines), encoding="utf-8")
     logger.info("fabric-memory: wrote %s", filename)
@@ -176,12 +197,19 @@ _pending_query = ""
 
 
 def _on_session_start(session_id="", platform="", **kwargs):
-    """Initialize session. Actual context injection happens on first pre_llm_call
-    when we have the user's actual message to query against."""
-    global _session_exchanges, _pending_query, _last_query_tokens
+    """Initialize session. Capture session_id from hermes hook."""
+    global _session_exchanges, _pending_query, _last_query_tokens, _current_session_id, _current_project_id
     _session_exchanges = []
     _pending_query = ""
     _last_query_tokens = set()
+    _current_session_id = session_id or ""
+    # Derive project from cwd if available
+    try:
+        cwd = Path.cwd()
+        if cwd != Path.home():
+            _current_project_id = cwd.name
+    except Exception:
+        pass
 
     # Load a minimal set of recent entries as baseline context
     agent = AGENT_NAME or "agent"

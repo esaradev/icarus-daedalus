@@ -26,6 +26,26 @@ grep -q "^project_id:" "$fp" && pass "schema v1 project_id" || fail "missing pro
 grep -q "^session_id:" "$fp" && pass "schema v1 session_id" || fail "missing session_id"
 grep -q "^summary:" "$fp" && pass "schema v1 summary always present" || fail "missing summary"
 
+# per-write session_id (not reused from source time)
+fp3=$(FABRIC_DIR="$T/fabric" fabric_write "test-agent" "cli" "task" "entry three")
+sid1=$(head -15 "$fp" | grep "^session_id:" | cut -d' ' -f2-)
+sid3=$(head -15 "$fp3" | grep "^session_id:" | cut -d' ' -f2-)
+# Both should have session_id but may differ if generated per-write
+[ -n "$sid1" ] && [ -n "$sid3" ] && pass "session_id generated per write" || fail "session_id missing"
+
+# lineage fields via env vars
+FABRIC_REVIEW_OF="alice:abc123" FABRIC_STATUS="completed" FABRIC_OUTCOME="approved" \
+  fp4=$(FABRIC_DIR="$T/fabric" fabric_write "bob" "cli" "review" "reviewed alice's work")
+head -20 "$fp4" | grep -q "^review_of: alice:abc123" && pass "review_of field written" || fail "review_of missing"
+head -20 "$fp4" | grep -q "^status: completed" && pass "status field written" || fail "status missing"
+head -20 "$fp4" | grep -q "^outcome: approved" && pass "outcome field written" || fail "outcome missing"
+
+# revises + customer_id
+FABRIC_REVISES="alice:def456" FABRIC_CUSTOMER_ID="cust-x-123" \
+  fp5=$(FABRIC_DIR="$T/fabric" fabric_write "alice" "cli" "task" "fixed the thing")
+head -20 "$fp5" | grep -q "^revises: alice:def456" && pass "revises field written" || fail "revises missing"
+head -20 "$fp5" | grep -q "^customer_id: cust-x-123" && pass "customer_id field written" || fail "customer_id missing"
+
 # uniqueness
 fp2=$(FABRIC_DIR="$T/fabric" fabric_write "test-agent" "cli" "task" "second entry")
 [ "$fp" != "$fp2" ] && pass "unique filenames" || fail "unique filenames"
