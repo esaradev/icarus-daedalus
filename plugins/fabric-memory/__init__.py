@@ -110,47 +110,106 @@ def _has_decision(text):
 _session_exchanges = []
 
 
+def _score_entry(entry, query_tokens, agent=None):
+    """Score an entry's relevance to the query. Inline retrieval logic."""
+    body = (entry.get("body", "") + " " + str(entry.get("summary", ""))).lower()
+    entry_tokens = set(re.findall(r'[a-z0-9]+', body)) - {"the", "a", "an", "is", "was", "are", "to", "of", "in", "for", "on", "with", "it", "and", "or", "not"}
+    score = len(query_tokens & entry_tokens) * 2
+    if agent and entry.get("agent") == agent:
+        score += 5
+    # recency
+    ts = entry.get("timestamp", "")
+    if ts:
+        try:
+            from datetime import datetime as _dt
+            age_h = (datetime.now(timezone.utc) - _dt.fromisoformat(str(ts).replace("Z", "+00:00"))).total_seconds() / 3600
+            if age_h < 1: score += 10
+            elif age_h < 24: score += 8
+            elif age_h < 168: score += 4
+        except (ValueError, AttributeError):
+            pass
+    tier = entry.get("tier", "")
+    if tier == "hot": score += 5
+    elif tier == "warm": score += 2
+    return score
+
+
+def _retrieve_relevant(query, agent=None, limit=5, max_tokens=1500):
+    """Inline retrieval: score, rank, budget-cap, deduplicate."""
+    if not FABRIC_DIR.exists():
+        return []
+    query_tokens = set(re.findall(r'[a-z0-9]+', query.lower())) - {"the", "a", "an", "is", "was", "are", "to", "of", "in", "for", "on", "with", "it", "and", "or", "not"}
+    if not query_tokens:
+        return _read_recent(agent, limit)
+
+    entries = []
+    for f in sorted(FABRIC_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        text = f.read_text(encoding="utf-8")[:800]
+        if "tier: hot" not in text and "tier: warm" not in text:
+            continue
+        meta = {}
+        m = re.search(r"^agent: (.+)$", text, re.MULTILINE)
+        if m: meta["agent"] = m.group(1)
+        m = re.search(r"^timestamp: (.+)$", text, re.MULTILINE)
+        if m: meta["timestamp"] = m.group(1)
+        m = re.search(r"^tier: (.+)$", text, re.MULTILINE)
+        if m: meta["tier"] = m.group(1)
+        m = re.search(r"^summary: (.+)$", text, re.MULTILINE)
+        if m: meta["summary"] = m.group(1)
+        body_parts = f.read_text(encoding="utf-8").split("---", 2)
+        meta["body"] = body_parts[2].strip() if len(body_parts) > 2 else ""
+        meta["file"] = f.name
+        entries.append(meta)
+
+    scored = [((_score_entry(e, query_tokens, agent), e)) for e in entries]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    scored = [(s, e) for s, e in scored if s > 0]
+
+    # deduplicate
+    seen = {}
+    deduped = []
+    for s, e in scored:
+        key = (e.get("agent", ""), e.get("body", "")[:50])
+        if key not in seen:
+            seen[key] = True
+            deduped.append((s, e))
+
+    # budget
+    budget = max_tokens
+    result = []
+    for s, e in deduped[:limit]:
+        tokens = len(e.get("body", "")) // 4
+        if tokens > budget:
+            break
+        budget -= tokens
+        result.append(e)
+
+    return result
+
+
+# Holds the first user message for deferred retrieval
+_pending_query = ""
+
+
 def _on_session_start(session_id="", platform="", **kwargs):
-    """Load relevant fabric context at session start.
-
-    Uses smart retrieval if available, falls back to recent entries.
-    Returns a string that hermes injects into the ephemeral system prompt.
-    """
-    global _session_exchanges
+    """Initialize session. Actual context injection happens on first pre_llm_call
+    when we have the user's actual message to query against."""
+    global _session_exchanges, _pending_query
     _session_exchanges = []
+    _pending_query = ""
 
+    # Load a minimal set of recent entries as baseline context
     agent = AGENT_NAME or "agent"
-
-    # Try smart retrieval
-    try:
-        retrieve_path = Path(__file__).parent.parent.parent / "fabric-retrieve.py"
-        if retrieve_path.exists():
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("fabric_retrieve", str(retrieve_path))
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            mod.FABRIC_DIR = FABRIC_DIR
-            results = mod.retrieve(agent, max_results=5, max_tokens=1500, agent=agent)
-            if results:
-                context = mod.format_results(results)
-                logger.info("fabric-memory: injected %d relevant entries via retrieval", len(results))
-                return f"[fabric memory] relevant context:\n{context}"
-    except Exception as exc:
-        logger.debug("fabric-memory: retrieval failed, falling back: %s", exc)
-
-    # Fallback: recent hot entries
-    entries = _read_recent(limit=8)
+    entries = _read_recent(limit=5)
     if not entries:
         return None
 
-    context_lines = ["[fabric memory] recent activity across all agents:"]
+    context_lines = ["[fabric memory] recent activity:"]
     for e in entries:
         ts = e["timestamp"][:16] if e["timestamp"] else "?"
         context_lines.append(f"  [{ts}] {e['agent']}: {e['summary']}")
 
-    context = "\n".join(context_lines)
-    logger.info("fabric-memory: injected %d entries (fallback)", len(entries))
-    return context
+    return "\n".join(context_lines)
 
 
 def _on_session_end(session_id="", platform="", completed=False, **kwargs):
@@ -174,6 +233,35 @@ def _on_session_end(session_id="", platform="", completed=False, **kwargs):
     summary = content[:80].replace("\n", " ")
 
     _write_entry(agent, plat, "session", content, summary=summary)
+
+
+_first_turn_done = False
+
+
+def _pre_llm_call(session_id="", user_message="", is_first_turn=False, **kwargs):
+    """On first turn, retrieve memories relevant to the user's actual message.
+
+    Returns context string that hermes appends to the ephemeral system prompt.
+    pre_llm_call return values are collected and injected as context.
+    """
+    global _first_turn_done
+    if _first_turn_done or not user_message:
+        return None
+    _first_turn_done = True
+
+    agent = AGENT_NAME or "agent"
+    results = _retrieve_relevant(user_message, agent=agent, limit=5, max_tokens=1500)
+    if not results:
+        return None
+
+    lines = ["[fabric memory] relevant to your request:"]
+    for e in results:
+        ts = e.get("timestamp", "")[:16] if e.get("timestamp") else "?"
+        summary = e.get("summary") or e.get("body", "")[:80]
+        lines.append(f"  [{ts}] {e.get('agent', '?')}: {summary}")
+
+    logger.info("fabric-memory: injected %d entries via query-aware retrieval", len(results))
+    return "\n".join(lines)
 
 
 def _post_llm_call(
@@ -200,6 +288,7 @@ def _post_llm_call(
 def register(ctx):
     """Register hooks with the hermes plugin system."""
     ctx.register_hook("on_session_start", _on_session_start)
+    ctx.register_hook("pre_llm_call", _pre_llm_call)
     ctx.register_hook("on_session_end", _on_session_end)
     ctx.register_hook("post_llm_call", _post_llm_call)
     logger.info("fabric-memory plugin registered")

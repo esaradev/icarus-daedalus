@@ -167,8 +167,13 @@ done < "$AGENT_TMP"
 # ── Load shared fabric memory (smart retrieval) ──────
 FABRIC_CONTEXT=""
 if [ -f "$REPO_DIR/fabric-retrieve.py" ]; then
-    # Use last agent's output as retrieval query for relevance
-    QUERY="agent dialogue cycle $CYCLE"
+    # Build a real query from the conversation so far
+    QUERY=""
+    if [ -n "$ALL_HISTORY" ]; then
+        # Use the last 200 chars of conversation as the query
+        QUERY=$(echo "$ALL_HISTORY" | tail -10 | tr '\n' ' ' | sed 's/.*\(.\{200\}\)/\1/')
+    fi
+    [ -z "$QUERY" ] && QUERY="agent conversation recent work"
     FABRIC_CONTEXT=$(python3 "$REPO_DIR/fabric-retrieve.py" "$QUERY" --max-results 5 --max-tokens 1500 2>/dev/null || true)
     if [ -n "$FABRIC_CONTEXT" ] && [ "$FABRIC_CONTEXT" != "no relevant entries found" ]; then
         FABRIC_CONTEXT="

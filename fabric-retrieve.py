@@ -242,13 +242,23 @@ def retrieve(query, max_results=5, max_tokens=2000, agent=None, project=None):
     # Apply max_results
     final = final[:max_results]
 
-    # Apply token budget
+    # Apply token budget (always enforced, even for first entry)
     budget = max_tokens
     result = []
     for score, e in final:
         content = e.get("_full", "")
         tokens = len(content) // 4
-        if tokens > budget and result:
+        if tokens > budget:
+            # Try truncating body to fit budget
+            if budget > 50:
+                avail_chars = budget * 4
+                truncated = dict(e)
+                truncated["_body"] = e.get("_body", "")[:avail_chars]
+                # Rebuild _full with truncated body
+                parts = e.get("_full", "").split("---", 2)
+                if len(parts) >= 3:
+                    truncated["_full"] = "---" + parts[1] + "---\n\n" + truncated["_body"] + "\n[truncated]"
+                result.append((score, truncated))
             break
         budget -= tokens
         result.append((score, e))
