@@ -237,8 +237,9 @@ def to_openai(pair):
 
 
 def to_together(pair):
-    """Convert to Together AI fine-tuning format (messages format for instruct models)."""
+    """Convert to Together AI fine-tuning format (messages with system prompt)."""
     return {"messages": [
+        {"role": "system", "content": "You are a helpful AI agent with shared memory across platforms."},
         {"role": "user", "content": pair["input"]},
         {"role": "assistant", "content": pair["output"]},
     ]}

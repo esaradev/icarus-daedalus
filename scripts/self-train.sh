@@ -167,9 +167,13 @@ echo "uploaded: $FILE_ID"
 # ── Step 4: Fine-tune ──
 echo ""
 echo "step 4: starting fine-tune..."
+# Use the model name from TOGETHER_MODEL env var, or default
+FT_MODEL="${TOGETHER_MODEL:-meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo}"
+echo "  model: $FT_MODEL"
+echo "  file: $FILE_ID"
 FT_RAW=$(http_post -X POST "https://api.together.xyz/v1/fine-tunes" \
     -H "Content-Type: application/json" \
-    -d "{\"training_file\": \"$FILE_ID\", \"model\": \"meta-llama/Meta-Llama-3.1-8B-Instruct-Reference\", \"n_epochs\": 3, \"suffix\": \"icarus-v1\"}")
+    -d "{\"training_file\": \"$FILE_ID\", \"model\": \"$FT_MODEL\", \"n_epochs\": 3, \"suffix\": \"icarus-v1\", \"training_type\": {\"type\": \"Full\"}}")
 
 split_http "$FT_RAW"
 assert_http "fine-tune"
