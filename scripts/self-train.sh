@@ -168,7 +168,7 @@ echo "uploaded: $FILE_ID"
 echo ""
 echo "step 4: starting fine-tune..."
 # Use the model name from TOGETHER_MODEL env var, or default
-FT_MODEL="${TOGETHER_MODEL:-meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo}"
+FT_MODEL="${TOGETHER_MODEL:-meta-llama/Meta-Llama-3.1-8B-Instruct-Reference}"
 echo "  model: $FT_MODEL"
 echo "  file: $FILE_ID"
 FT_RAW=$(http_post -X POST "https://api.together.xyz/v1/fine-tunes" \
