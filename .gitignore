@@ -9,3 +9,4 @@ messages.db
 *.db
 archive/
 compaction-history.md
+training-data/

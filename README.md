@@ -109,6 +109,27 @@ bash add-agent.sh --name scout --role 'researcher that finds information'
 
 `dialogue.sh` reads `agents.yml` and cycles through all agents. Each agent sees the full history from every other agent before responding. 3 agents means 3 fabric entries per cycle. All agents share the same `~/fabric/` folder.
 
+## Training data export
+
+Every fabric entry is a potential fine-tuning example. Running agents generates training data over time.
+
+```bash
+python3 export-training.py --output ./training-data/
+```
+
+Extracts three types of training pairs:
+
+- **Basic pairs**: task/context as input, agent output as response
+- **Review-correction pairs**: original work + reviewer feedback as input, improved version as output. Teaches self-correction.
+- **Cross-platform pairs**: memory from platform A as context, agent response on platform B as output. Teaches context awareness.
+
+Outputs three formats:
+- `openai.jsonl` -- OpenAI fine-tuning format
+- `hf-dataset.jsonl` -- Hugging Face dataset format
+- `raw-pairs.json` -- raw input/output pairs with metadata
+
+The longer you run agents, the more training data accumulates. Reviews and cross-platform recalls produce the highest-quality pairs.
+
 ## Claude Code hooks
 
 Install with one command:
@@ -157,6 +178,7 @@ daedalus-SOUL.md     daedalus personality
 icarus-log.md        7 cycles of icarus thoughts and questions
 daedalus-log.md      7 cycles of daedalus responses and challenges
 PROTOCOL.md          memory format spec
+export-training.py   extract fine-tuning data from fabric entries (openai/hf/raw formats)
 plugins/fabric-memory/ hermes plugin -- auto-writes to fabric, loads context, captures decisions
 skills/fabric-memory/ hermes skill -- teaches any agent to use the fabric
 ```
