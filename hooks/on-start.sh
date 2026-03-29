@@ -17,14 +17,17 @@ PROJECT=$(basename "$CWD" 2>/dev/null || echo "")
 
 # Use smart retrieval with project name + any additional context
 if [ -f "$REPO_DIR/fabric-retrieve.py" ] && [ -n "$PROJECT" ]; then
-    # Combine project name with recent work description for a richer query
+    # Build a rich query from all available project context
     QUERY="$PROJECT"
-    # Check if there's a CLAUDE.md or README in the project for additional signal
+    # Add CLAUDE.md instructions (describes the project's patterns and rules)
     if [ -f "$CWD/CLAUDE.md" ]; then
         QUERY="$QUERY $(head -5 "$CWD/CLAUDE.md" | tr '\n' ' ')"
     elif [ -f "$CWD/README.md" ]; then
         QUERY="$QUERY $(head -3 "$CWD/README.md" | tr '\n' ' ')"
     fi
+    # Add the most recent fabric summary for this project (last session's work)
+    RECENT_SUMMARY=$(grep -rl "$PROJECT" "$FABRIC_DIR" --include="*.md" 2>/dev/null | head -1 | xargs head -20 2>/dev/null | grep "^summary:" | head -1 | sed 's/^summary: //')
+    [ -n "$RECENT_SUMMARY" ] && QUERY="$QUERY $RECENT_SUMMARY"
     CONTEXT=$(FABRIC_DIR="$FABRIC_DIR" python3 "$REPO_DIR/fabric-retrieve.py" "$QUERY" \
         --max-results 5 --max-tokens 1500 --project "$PROJECT" 2>/dev/null || true)
     if [ -n "$CONTEXT" ] && [ "$CONTEXT" != "no relevant entries found" ]; then

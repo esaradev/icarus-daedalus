@@ -164,36 +164,10 @@ $(tail -60 "$alog" 2>/dev/null)
     fi
 done < "$AGENT_TMP"
 
-# ── Load shared fabric memory (smart retrieval) ──────
+# Fabric retrieval happens per-agent inside the loop below.
+# CYCLE_CONTEXT accumulates what each agent said this cycle,
+# which becomes the retrieval query for the next agent.
 FABRIC_CONTEXT=""
-if [ -f "$REPO_DIR/fabric-retrieve.py" ]; then
-    # Build a real query from the conversation so far
-    QUERY=""
-    if [ -n "$ALL_HISTORY" ]; then
-        # Use the last 200 chars of conversation as the query
-        QUERY=$(echo "$ALL_HISTORY" | tail -10 | tr '\n' ' ' | sed 's/.*\(.\{200\}\)/\1/')
-    fi
-    [ -z "$QUERY" ] && QUERY="agent conversation recent work"
-    FABRIC_CONTEXT=$(python3 "$REPO_DIR/fabric-retrieve.py" "$QUERY" --max-results 5 --max-tokens 1500 2>/dev/null || true)
-    if [ -n "$FABRIC_CONTEXT" ] && [ "$FABRIC_CONTEXT" != "no relevant entries found" ]; then
-        FABRIC_CONTEXT="
---- relevant fabric memory ---
-$FABRIC_CONTEXT
-"
-    else
-        FABRIC_CONTEXT=""
-    fi
-fi
-# Fallback to basic read
-if [ -z "$FABRIC_CONTEXT" ]; then
-    FABRIC_ENTRIES=$(fabric_read "" "hot" 2>/dev/null || true)
-    if [ -n "$FABRIC_ENTRIES" ]; then
-        FABRIC_CONTEXT="
---- shared fabric memory ---
-$(echo "$FABRIC_ENTRIES" | head -80)
-"
-    fi
-fi
 
 # ── Run each agent ─────────────────────────────────────
 CYCLE_CONTEXT=""
@@ -209,6 +183,30 @@ while IFS='|' read -r name role home; do
     [ -f "$alog" ] || printf "# ${name} log\n\n${role}\n\n" > "$alog"
 
     echo "${name}> thinking..."
+
+    # Per-agent retrieval: use what the previous agent said as the query
+    FABRIC_CONTEXT=""
+    if [ -f "$REPO_DIR/fabric-retrieve.py" ]; then
+        # Build query from: cycle context (previous agents this cycle) + last history
+        RETRIEVE_QUERY=""
+        if [ -n "$CYCLE_CONTEXT" ]; then
+            # Use the last agent's output as the primary query signal
+            RETRIEVE_QUERY=$(echo "$CYCLE_CONTEXT" | tail -3 | tr '\n' ' ' | sed 's/.*\(.\{150\}\)/\1/')
+        elif [ -n "$ALL_HISTORY" ]; then
+            RETRIEVE_QUERY=$(echo "$ALL_HISTORY" | tail -5 | tr '\n' ' ' | sed 's/.*\(.\{150\}\)/\1/')
+        fi
+        if [ -n "$RETRIEVE_QUERY" ]; then
+            FABRIC_CONTEXT=$(python3 "$REPO_DIR/fabric-retrieve.py" "$RETRIEVE_QUERY" --max-results 3 --max-tokens 1000 --agent "$name" 2>/dev/null || true)
+            if [ -n "$FABRIC_CONTEXT" ] && [ "$FABRIC_CONTEXT" != "no relevant entries found" ]; then
+                FABRIC_CONTEXT="
+--- relevant fabric memory for $name ---
+$FABRIC_CONTEXT
+"
+            else
+                FABRIC_CONTEXT=""
+            fi
+        fi
+    fi
 
     # Telegram token for this agent
     tg_token=""

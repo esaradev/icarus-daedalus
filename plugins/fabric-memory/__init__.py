@@ -175,10 +175,10 @@ _pending_query = ""
 def _on_session_start(session_id="", platform="", **kwargs):
     """Initialize session. Actual context injection happens on first pre_llm_call
     when we have the user's actual message to query against."""
-    global _session_exchanges, _pending_query, _first_turn_done
+    global _session_exchanges, _pending_query, _last_query_tokens
     _session_exchanges = []
     _pending_query = ""
-    _first_turn_done = False
+    _last_query_tokens = set()
 
     # Load a minimal set of recent entries as baseline context
     agent = AGENT_NAME or "agent"
@@ -217,19 +217,39 @@ def _on_session_end(session_id="", platform="", completed=False, **kwargs):
     _write_entry(agent, plat, "session", content, summary=summary)
 
 
-_first_turn_done = False
+_last_query_tokens = set()
 
 
 def _pre_llm_call(session_id="", user_message="", is_first_turn=False, **kwargs):
-    """On first turn, retrieve memories relevant to the user's actual message.
+    """Retrieve memories relevant to the user's actual message.
+
+    Fires on first turn always. On subsequent turns, fires only if the
+    user's message has substantially different keywords from the last
+    query (topic changed). This prevents re-injecting the same context
+    but catches topic shifts mid-session.
 
     Returns context string that hermes appends to the ephemeral system prompt.
-    pre_llm_call return values are collected and injected as context.
     """
-    global _first_turn_done
-    if _first_turn_done or not user_message:
+    global _last_query_tokens
+    if not user_message:
         return None
-    _first_turn_done = True
+
+    # Tokenize the current message
+    msg_tokens = set(re.findall(r'[a-z0-9]+', user_message.lower())) - {
+        "the", "a", "an", "is", "was", "are", "to", "of", "in", "for",
+        "on", "with", "it", "and", "or", "not", "i", "you", "can", "do",
+        "this", "that", "what", "how", "please", "help", "me", "my"}
+
+    if not msg_tokens:
+        return None
+
+    # Skip if the topic hasn't changed (>60% keyword overlap with last query)
+    if _last_query_tokens:
+        overlap = len(msg_tokens & _last_query_tokens) / max(len(msg_tokens), 1)
+        if overlap > 0.6:
+            return None
+
+    _last_query_tokens = msg_tokens
 
     agent = AGENT_NAME or "agent"
     results = _retrieve_relevant(user_message, agent=agent, limit=5, max_tokens=1500)
@@ -242,7 +262,7 @@ def _pre_llm_call(session_id="", user_message="", is_first_turn=False, **kwargs)
         summary = e.get("summary") or e.get("_body", e.get("body", ""))[:80]
         lines.append(f"  [{ts}] {e.get('agent', '?')}: {summary}")
 
-    logger.info("fabric-memory: injected %d entries via query-aware retrieval", len(results))
+    logger.info("fabric-memory: injected %d entries via query-aware retrieval (query: %s)", len(results), user_message[:50])
     return "\n".join(lines)
 
 

@@ -494,8 +494,17 @@ grep -q "python3 -c" "$SCRIPT_DIR/scripts/self-train.sh" && grep -q "json.dumps"
 # Test: setup.sh copies fabric-retrieve.py into plugin dir
 grep -q "fabric-retrieve.py" "$SCRIPT_DIR/setup.sh" && pass "setup copies retrieval helper" || fail "setup missing retrieval copy"
 
-# Test: plugin resets _first_turn_done on session start
-grep -q "_first_turn_done = False" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin resets _first_turn_done" || fail "plugin never resets _first_turn_done"
+# Test: plugin resets query state on session start
+grep -q "_last_query_tokens = set()" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin resets query state on session start" || fail "plugin never resets query state"
+
+# Test: plugin fires retrieval on topic change (not just first turn)
+grep -q "overlap.*0.6" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin detects topic changes" || fail "plugin only fires on first turn"
+
+# Test: dialogue.sh uses previous agent output as retrieval query
+grep -q "CYCLE_CONTEXT.*tail\|previous agent" "$SCRIPT_DIR/examples/hermes-demo/dialogue.sh" && pass "dialogue uses previous agent output as query" || fail "dialogue uses static query"
+
+# Test: hook uses recent fabric summary in query
+grep -q "RECENT_SUMMARY" "$SCRIPT_DIR/hooks/on-start.sh" && pass "hook includes recent summary in query" || fail "hook only uses project name"
 
 # Test: plugin uses shared retriever (no inline scoring)
 grep -q "_load_retriever\|_get_retriever" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin uses shared retriever" || fail "plugin has inline retrieval"
