@@ -64,7 +64,8 @@ source_env "$FIRST_HOME/.env"
 SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
 TELEGRAM_GROUP_ID="${TELEGRAM_HOME_CHANNEL:-}"
 
-source "$SCRIPT_DIR/fabric-adapter.sh"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$REPO_DIR/fabric-adapter.sh"
 
 # ── Determine cycle number ─────────────────────────────
 FIRST_NAME=$(head -1 "$AGENT_TMP" | cut -d'|' -f1)
@@ -72,14 +73,20 @@ FIRST_LOG="$SCRIPT_DIR/${FIRST_NAME}-log.md"
 CYCLE=$(grep -c '## Cycle' "$FIRST_LOG" 2>/dev/null || true)
 CYCLE=$(( ${CYCLE:-0} + 1 ))
 
-# ── Compaction ─────────────────────────────────────────
+# ── Compaction (all agent pairs) ──────────────────────
 if [ -f "$SCRIPT_DIR/compact.sh" ]; then
-    source "$SCRIPT_DIR/compact.sh"
-    SECOND_NAME=$(sed -n '2p' "$AGENT_TMP" | cut -d'|' -f1)
-    if [ -n "$SECOND_NAME" ]; then
-        SECOND_LOG="$SCRIPT_DIR/${SECOND_NAME}-log.md"
-        compact_if_needed "$FIRST_LOG" "$SECOND_LOG" "$CYCLE" "$FIRST_NAME" "$SECOND_NAME"
-    fi
+    source "$SCRIPT_DIR/compact.sh" # compact.sh stays in demo dir
+    # Compact consecutive pairs from agents.yml
+    PREV_NAME=""
+    PREV_LOG=""
+    while IFS='|' read -r cname crole chome; do
+        CLOG="$SCRIPT_DIR/${cname}-log.md"
+        if [ -n "$PREV_NAME" ] && [ -f "$PREV_LOG" ] && [ -f "$CLOG" ]; then
+            compact_if_needed "$PREV_LOG" "$CLOG" "$CYCLE" "$PREV_NAME" "$cname"
+        fi
+        PREV_NAME="$cname"
+        PREV_LOG="$CLOG"
+    done < "$AGENT_TMP"
 fi
 
 # ── Shared functions ───────────────────────────────────
@@ -157,6 +164,16 @@ $(tail -60 "$alog" 2>/dev/null)
     fi
 done < "$AGENT_TMP"
 
+# ── Load shared fabric memory ─────────────────────────
+FABRIC_CONTEXT=""
+FABRIC_ENTRIES=$(fabric_read "" "hot" 2>/dev/null || true)
+if [ -n "$FABRIC_ENTRIES" ]; then
+    FABRIC_CONTEXT="
+--- shared fabric memory (recent entries from all agents) ---
+$(echo "$FABRIC_ENTRIES" | head -100)
+"
+fi
+
 # ── Run each agent ─────────────────────────────────────
 CYCLE_CONTEXT=""
 AGENT_IDX=0
@@ -195,6 +212,9 @@ THOUGHT: [2-4 sentences. Your perspective based on your role. Reference what oth
 RESPONSE: [One direct statement or question to the group.]"
 
     user_prompt="Cycle $CYCLE.
+
+Shared memory from fabric (cross-platform entries):
+${FABRIC_CONTEXT:-no shared entries yet}
 
 Full conversation history:
 $ALL_HISTORY

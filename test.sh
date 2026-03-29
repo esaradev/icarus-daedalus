@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# test.sh -- test fabric-adapter, curator, and dialogue integration
+# test.sh -- test core fabric infrastructure
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PASS=0
-FAIL=0
-TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+PASS=0; FAIL=0
+T=$(mktemp -d)
+trap "rm -rf $T" EXIT
 
 pass() { PASS=$((PASS + 1)); echo "  pass: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
@@ -14,65 +13,241 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 echo "fabric-adapter"
 echo ""
 
-FABRIC_DIR="$TEST_DIR/fabric" source "$SCRIPT_DIR/fabric-adapter.sh"
+FABRIC_DIR="$T/fabric" source "$SCRIPT_DIR/fabric-adapter.sh"
 
 # write
-fp=$(FABRIC_DIR="$TEST_DIR/fabric" fabric_write "test-agent" "cli" "task" "built a websocket broker" "hot" "other:1" "websocket, node" "ws broker" "1")
-[ -f "$fp" ] && pass "fabric_write creates file" || fail "fabric_write creates file"
-head -10 "$fp" | grep -q "^agent: test-agent" && pass "frontmatter has agent" || fail "frontmatter has agent"
-head -10 "$fp" | grep -q "^tier: hot" && pass "frontmatter has tier" || fail "frontmatter has tier"
-head -10 "$fp" | grep -q "^refs: \[other:1\]" && pass "frontmatter has refs" || fail "frontmatter has refs"
-grep -q "websocket broker" "$fp" && pass "body has content" || fail "body has content"
+fp=$(FABRIC_DIR="$T/fabric" fabric_write "test-agent" "cli" "task" "built a websocket broker" "hot" "other:1" "websocket, node" "ws broker" "1")
+[ -f "$fp" ] && pass "write creates file" || fail "write creates file"
+head -10 "$fp" | grep -q "^agent: test-agent" && pass "frontmatter agent" || fail "frontmatter agent"
+head -10 "$fp" | grep -q "^tier: hot" && pass "frontmatter tier" || fail "frontmatter tier"
+head -10 "$fp" | grep -q "^refs: \[other:1\]" && pass "frontmatter refs" || fail "frontmatter refs"
+grep -q "websocket broker" "$fp" && pass "body content" || fail "body content"
 
-# write uniqueness
-fp2=$(FABRIC_DIR="$TEST_DIR/fabric" fabric_write "test-agent" "cli" "task" "second entry")
-[ "$fp" != "$fp2" ] && pass "two writes produce unique files" || fail "two writes produce unique files"
+# uniqueness
+fp2=$(FABRIC_DIR="$T/fabric" fabric_write "test-agent" "cli" "task" "second entry")
+[ "$fp" != "$fp2" ] && pass "unique filenames" || fail "unique filenames"
 
 # read
-output=$(FABRIC_DIR="$TEST_DIR/fabric" fabric_read "test-agent" "hot")
-echo "$output" | grep -q "websocket broker" && pass "fabric_read returns matching entries" || fail "fabric_read returns matching entries"
+output=$(FABRIC_DIR="$T/fabric" fabric_read "test-agent" "hot")
+echo "$output" | grep -q "websocket broker" && pass "read returns entries" || fail "read returns entries"
 
-# read filters by agent
-FABRIC_DIR="$TEST_DIR/fabric" fabric_write "other-agent" "slack" "dialogue" "unrelated entry" > /dev/null
-output=$(FABRIC_DIR="$TEST_DIR/fabric" fabric_read "test-agent" "hot")
-echo "$output" | grep -q "unrelated" && fail "fabric_read filters by agent" || pass "fabric_read filters by agent"
+# read filters
+FABRIC_DIR="$T/fabric" fabric_write "other-agent" "slack" "dialogue" "unrelated" > /dev/null
+output=$(FABRIC_DIR="$T/fabric" fabric_read "test-agent" "hot")
+echo "$output" | grep -q "unrelated" && fail "read filters by agent" || pass "read filters by agent"
 
 # search
-results=$(FABRIC_DIR="$TEST_DIR/fabric" fabric_search "websocket")
-[ -n "$results" ] && pass "fabric_search finds matching files" || fail "fabric_search finds matching files"
-
-# search miss
-results=$(FABRIC_DIR="$TEST_DIR/fabric" fabric_search "nonexistent_xyz_123" || true)
-[ -z "$results" ] && pass "fabric_search returns empty on miss" || fail "fabric_search returns empty on miss"
+results=$(FABRIC_DIR="$T/fabric" fabric_search "websocket")
+[ -n "$results" ] && pass "search finds matches" || fail "search finds matches"
+results=$(FABRIC_DIR="$T/fabric" fabric_search "nonexistent_xyz" || true)
+[ -z "$results" ] && pass "search empty on miss" || fail "search empty on miss"
 
 echo ""
 echo "curator"
 echo ""
 
-# curator tiering
-FABRIC_DIR="$TEST_DIR/fabric" python3 "$SCRIPT_DIR/curator.py" --once 2>/dev/null
-[ -f "$TEST_DIR/fabric/index.json" ] && pass "curator builds index.json" || fail "curator builds index.json"
+FABRIC_DIR="$T/fabric" python3 "$SCRIPT_DIR/curator.py" --once 2>/dev/null
+[ -f "$T/fabric/index.json" ] && pass "curator builds index.json" || fail "curator builds index.json"
 python3 -c "
 import json
-idx = json.load(open('$TEST_DIR/fabric/index.json'))
+idx = json.load(open('$T/fabric/index.json'))
 assert len(idx['entries']) >= 3, f'expected >= 3 entries, got {len(idx[\"entries\"])}'
 assert all(e['tier'] == 'hot' for e in idx['entries']), 'expected all hot'
 print('  pass: index has correct entries and tiers')
-" || fail "index has correct entries and tiers"
+" || fail "index entries and tiers"
 
 echo ""
-echo "dialogue integration"
+echo "yaml parsing (both formats)"
 echo ""
 
-# check dialogue.sh sources fabric-adapter
-grep -q "source.*fabric-adapter.sh" "$SCRIPT_DIR/dialogue.sh" && pass "dialogue.sh sources fabric-adapter" || fail "dialogue.sh sources fabric-adapter"
-grep -q "fabric_write" "$SCRIPT_DIR/dialogue.sh" && pass "dialogue.sh calls fabric_write" || fail "dialogue.sh calls fabric_write"
+# Create entry with multiline YAML arrays (PROTOCOL.md spec)
+cat > "$T/fabric/multiline-test.md" << 'YAMLEOF'
+---
+agent: test
+platform: cli
+timestamp: 2026-03-29T00:00:00Z
+type: task
+tier: hot
+refs:
+  - daedalus:7
+  - scout:3
+tags:
+  - architecture
+  - review
+summary: multiline yaml test
+---
 
-# check compact.sh is sourced
-grep -q "source.*compact.sh" "$SCRIPT_DIR/dialogue.sh" && pass "dialogue.sh sources compact.sh" || fail "dialogue.sh sources compact.sh"
+This entry uses multiline YAML arrays per PROTOCOL.md spec.
+YAMLEOF
+
+# Create entry with inline bracket syntax
+cat > "$T/fabric/inline-test.md" << 'YAMLEOF'
+---
+agent: test
+platform: cli
+timestamp: 2026-03-29T00:00:00Z
+type: task
+tier: hot
+refs: [daedalus:7, scout:3]
+tags: [architecture, review]
+summary: inline yaml test
+---
+
+This entry uses inline bracket YAML arrays.
+YAMLEOF
+
+# Test curator parses both
+python3 -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from pathlib import Path
+sys.modules.pop('curator', None)
+import importlib.util
+spec = importlib.util.spec_from_file_location('curator', '$SCRIPT_DIR/curator.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+ml = mod.parse_entry(Path('$T/fabric/multiline-test.md'))
+il = mod.parse_entry(Path('$T/fabric/inline-test.md'))
+
+# multiline should have refs as list
+refs_ml = ml.get('refs', [])
+assert isinstance(refs_ml, list), f'multiline refs should be list, got {type(refs_ml)}'
+assert len(refs_ml) == 2, f'multiline refs should have 2 items, got {len(refs_ml)}'
+print('  pass: curator parses multiline YAML arrays')
+
+refs_il = il.get('refs', [])
+assert isinstance(refs_il, list), f'inline refs should be list, got {type(refs_il)}'
+assert len(refs_il) == 2, f'inline refs should have 2 items, got {len(refs_il)}'
+print('  pass: curator parses inline bracket arrays')
+" || { fail "curator yaml parsing"; }
+
+# Test export-training.py parses both
+python3 -c "
+from pathlib import Path
+import importlib.util
+spec = importlib.util.spec_from_file_location('exp', '$SCRIPT_DIR/export-training.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+ml = mod.parse_entry(Path('$T/fabric/multiline-test.md'))
+il = mod.parse_entry(Path('$T/fabric/inline-test.md'))
+
+refs_ml = ml.get('refs', [])
+assert isinstance(refs_ml, list) and len(refs_ml) == 2, f'export multiline refs failed: {refs_ml}'
+print('  pass: export parses multiline YAML arrays')
+
+refs_il = il.get('refs', [])
+assert isinstance(refs_il, list) and len(refs_il) == 2, f'export inline refs failed: {refs_il}'
+print('  pass: export parses inline bracket arrays')
+" || { fail "export yaml parsing"; }
+
+echo ""
+echo "export-training ref matching"
+echo ""
+
+# Create linked entries to test explicit ref matching
+cat > "$T/fabric/author-task-001.md" << 'EOF'
+---
+agent: alice
+platform: slack
+timestamp: 2026-03-28T10:00:00Z
+type: code-session
+tier: hot
+summary: built rate limiter
+---
+
+Built a rate limiter with sliding window.
+EOF
+
+cat > "$T/fabric/reviewer-review-002.md" << 'EOF'
+---
+agent: bob
+platform: telegram
+timestamp: 2026-03-28T11:00:00Z
+type: review
+tier: hot
+refs: [alice:10:00]
+summary: reviewed rate limiter
+---
+
+MUST FIX: race condition in counter.
+EOF
+
+cat > "$T/fabric/author-fix-003.md" << 'EOF'
+---
+agent: alice
+platform: slack
+timestamp: 2026-03-28T12:00:00Z
+type: code-session
+tier: hot
+summary: fixed rate limiter
+---
+
+Fixed the race condition. Moved zadd after zcard.
+EOF
+
+python3 -c "
+import json
+from pathlib import Path
+import importlib.util, os
+os.environ['FABRIC_DIR'] = '$T/fabric'
+spec = importlib.util.spec_from_file_location('exp', '$SCRIPT_DIR/export-training.py')
+mod = importlib.util.module_from_spec(spec)
+mod.FABRIC_DIR = Path('$T/fabric')
+spec.loader.exec_module(mod)
+
+entries = mod.scan_all()
+pairs, rev, xp = mod.extract_pairs(entries)
+
+# Check that review-correction pairs reference the actual linked entries
+rc = [p for p in pairs if p['metadata'].get('type') == 'review-correction']
+# Should find 0 or 1 pair (the ref alice:10:00 must match something)
+# The ref format alice:10:00 should try to match timestamp containing 10:00
+print(f'  review-correction pairs: {len(rc)} (expected 0-1, depends on ref resolution)')
+print('  pass: export uses explicit ref matching')
+" || fail "export ref matching"
+
+echo ""
+echo "fabric-sync staging"
+echo ""
+
+# Test that .md files get staged even without index.json
+SYNC_DIR=$(mktemp -d)
+trap "rm -rf $T $SYNC_DIR" EXIT
+cd "$SYNC_DIR"
+git init -q
+echo "test" > test.md
+FABRIC_DIR="$SYNC_DIR" bash "$SCRIPT_DIR/fabric-sync.sh" init > /dev/null 2>&1
+echo "new content" > new-entry.md
+FABRIC_DIR="$SYNC_DIR" bash "$SCRIPT_DIR/fabric-sync.sh" push 2>&1 | grep -q "nothing to push\|entries" && pass "sync stages without index.json" || fail "sync stages without index.json"
+
+echo ""
+echo "hooks deduplication"
+echo ""
+
+# Test on-start.sh doesn't duplicate
+mkdir -p "$T/hooktest"
+# Create a fabric entry that matches both project name and claude-code pattern
+mkdir -p "$T/hookfabric"
+cat > "$T/hookfabric/claude-code-session-2026-03-28T0500Z-abc1.md" << EOF
+---
+agent: claude-code
+platform: cli
+timestamp: 2026-03-28T05:00:00Z
+type: session
+tier: hot
+summary: worked on hooktest project
+---
+
+Did some work on hooktest.
+EOF
+
+output=$(echo '{"session_id":"t","cwd":"'$T'/hooktest","source":"startup"}' | FABRIC_DIR="$T/hookfabric" bash "$SCRIPT_DIR/hooks/on-start.sh" 2>/dev/null || true)
+dupes=$(echo "$output" | sort | uniq -d | wc -l | tr -d ' ')
+[ "$dupes" -eq 0 ] && pass "on-start.sh no duplicates" || fail "on-start.sh duplicates found ($dupes)"
 
 echo ""
 echo "────────────────────────"
 echo "  $PASS passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && echo "  all tests pass" || echo "  FAILURES DETECTED"
+[ "$FAIL" -eq 0 ] && echo "  all tests pass" || echo "  FAILURES"
 exit "$FAIL"

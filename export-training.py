@@ -28,13 +28,31 @@ def parse_entry(filepath):
     if len(parts) < 3:
         return None
     meta = {}
-    for line in parts[1].strip().split("\n"):
-        if ": " in line:
-            k, v = line.split(": ", 1)
-            k = k.strip()
-            if v.startswith("[") and v.endswith("]"):
-                v = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
-            meta[k] = v
+    try:
+        import yaml as _yaml
+        meta = _yaml.safe_load(parts[1]) or {}
+    except Exception:
+        lines = parts[1].strip().split("\n")
+        current_key = None
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("- ") and current_key:
+                if not isinstance(meta.get(current_key), list):
+                    meta[current_key] = []
+                meta[current_key].append(stripped[2:].strip().strip("\"'"))
+            elif ": " in stripped and not stripped.startswith("-"):
+                k, v = stripped.split(": ", 1)
+                k = k.strip()
+                current_key = k
+                if v.startswith("[") and v.endswith("]"):
+                    meta[k] = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
+                elif v.strip():
+                    meta[k] = v.strip()
+                else:
+                    meta[k] = []
+            elif stripped.endswith(":") and not stripped.startswith("-"):
+                current_key = stripped[:-1].strip()
+                meta[current_key] = []
     meta["body"] = parts[2].strip()
     meta["file"] = filepath.name
     return meta
@@ -118,39 +136,50 @@ def extract_pairs(entries):
             user_msg = f"[{entry_type or 'task'}] {summary or 'Complete this task'}"
             pairs.append(make_pair(user_msg, body, {"type": "basic", "agent": agent, "platform": platform}))
 
-        # ── REVIEW PAIRS: if this is a review, find the original ──
+        # ── REVIEW PAIRS: only pair explicitly linked entries ──
         refs = e.get("refs", [])
         if isinstance(refs, str):
             refs = [r.strip() for r in refs.split(",") if r.strip()]
 
         if entry_type == "review" and refs:
-            # Find the entry being reviewed
             for ref in refs:
-                ref_agent = ref.split(":")[0] if ":" in ref else ""
-                # Look for entries from that agent
-                originals = [o for o in entries if o.get("agent") == ref_agent and o.get("type") in ("code-session", "task", "dialogue")]
-                if originals:
-                    orig = originals[0]
-                    # Training pair: original + review → improved version
-                    user_msg = f"[self-correct] Original work:\n{orig.get('body', '')[:300]}\n\nReview feedback:\n{body[:300]}\n\nProvide the improved version."
-                    # The improved version would be a subsequent entry from the original agent
-                    improved = [o for o in entries if o.get("agent") == ref_agent and o.get("timestamp", "") > e.get("timestamp", "")]
-                    if improved:
-                        pairs.append(make_pair(user_msg, improved[0].get("body", ""), {"type": "review-correction", "reviewer": agent, "author": ref_agent}))
-                        review_pairs += 1
+                ref_agent, ref_id = (ref.split(":", 1) + [""])[:2] if ":" in ref else (ref, "")
+                if not ref_agent or not ref_id:
+                    continue
+                # Find the SPECIFIC entry being reviewed by matching agent + cycle/id
+                originals = [o for o in entries
+                    if o.get("agent") == ref_agent
+                    and (str(ref_id) in o.get("file", "") or str(ref_id) in str(o.get("timestamp", "")))]
+                if not originals:
+                    continue  # can't resolve ref, skip entirely
+                orig = originals[0]
+                # Find a subsequent entry from the same agent that came AFTER this review
+                review_ts = e.get("timestamp", "")
+                improved = [o for o in entries
+                    if o.get("agent") == ref_agent
+                    and o.get("timestamp", "") > review_ts
+                    and o.get("file") != orig.get("file")]
+                if not improved:
+                    continue  # no revision found, skip
+                user_msg = f"[self-correct] Original work:\n{orig.get('body', '')[:300]}\n\nReview feedback:\n{body[:300]}\n\nProvide the improved version."
+                pairs.append(make_pair(user_msg, improved[0].get("body", ""), {"type": "review-correction", "reviewer": agent, "author": ref_agent}))
+                review_pairs += 1
 
-        # ── CROSS-PLATFORM PAIRS ──
+        # ── CROSS-PLATFORM PAIRS: only from explicitly referenced agents ──
         if refs and platform:
             for ref in refs:
                 ref_agent = ref.split(":")[0] if ":" in ref else ""
+                if not ref_agent:
+                    continue
                 # Find entries from the referenced agent on a DIFFERENT platform
                 xplat = [o for o in entries if o.get("agent") == ref_agent and o.get("platform") != platform and o.get("platform")]
-                if xplat:
-                    source = xplat[0]
-                    src_plat = source.get("platform", "?")
-                    user_msg = f"[cross-platform context] Memory from {src_plat}:\n{source.get('body', '')[:300]}\n\nYou are on {platform}. Use this context in your response."
-                    pairs.append(make_pair(user_msg, body, {"type": "cross-platform", "source_platform": src_plat, "target_platform": platform, "agent": agent}))
-                    xplat_pairs += 1
+                if not xplat:
+                    continue
+                source = xplat[0]
+                src_plat = source.get("platform", "?")
+                user_msg = f"[cross-platform context] Memory from {src_plat}:\n{source.get('body', '')[:300]}\n\nYou are on {platform}. Use this context in your response."
+                pairs.append(make_pair(user_msg, body, {"type": "cross-platform", "source_platform": src_plat, "target_platform": platform, "agent": agent}))
+                xplat_pairs += 1
 
     return pairs, review_pairs, xplat_pairs
 

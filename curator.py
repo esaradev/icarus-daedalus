@@ -29,12 +29,33 @@ def parse_entry(filepath):
     if len(parts) < 3:
         return None
     meta = {}
-    for line in parts[1].strip().split("\n"):
-        if ": " in line:
-            k, v = line.split(": ", 1)
-            if v.startswith("[") and v.endswith("]"):
-                v = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
-            meta[k.strip()] = v
+    try:
+        import yaml as _yaml
+        meta = _yaml.safe_load(parts[1]) or {}
+    except Exception:
+        # Fallback: handle both inline [a, b] and multiline YAML arrays
+        lines = parts[1].strip().split("\n")
+        current_key = None
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("- ") and current_key:
+                # multiline array item
+                if not isinstance(meta.get(current_key), list):
+                    meta[current_key] = []
+                meta[current_key].append(stripped[2:].strip().strip("\"'"))
+            elif ": " in stripped and not stripped.startswith("-"):
+                k, v = stripped.split(": ", 1)
+                k = k.strip()
+                current_key = k
+                if v.startswith("[") and v.endswith("]"):
+                    meta[k] = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
+                elif v.strip():
+                    meta[k] = v.strip()
+                else:
+                    meta[k] = []
+            elif stripped.endswith(":") and not stripped.startswith("-"):
+                current_key = stripped[:-1].strip()
+                meta[current_key] = []
     meta["_body"] = parts[2].strip()
     meta["_file"] = str(filepath)
     return meta

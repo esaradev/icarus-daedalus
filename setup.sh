@@ -399,9 +399,9 @@ ENVEOF
 done
 
 # ── 6. WRITE agents.yml ────────────────────────────────
-printf "agents:\n" > "$SCRIPT_DIR/agents.yml"
+printf "agents:\n" > "$SCRIPT_DIR/examples/hermes-demo/agents.yml"
 for i in $(seq 0 $((AGENT_COUNT - 1))); do
-    cat >> "$SCRIPT_DIR/agents.yml" << EOF
+    cat >> "$SCRIPT_DIR/examples/hermes-demo/agents.yml" << EOF
   - name: ${AGENT_NAMES[$i]}
     role: ${AGENT_ROLES[$i]}
     home: ~/.hermes-${AGENT_NAMES[$i]}
@@ -437,7 +437,7 @@ read -r RUN_TEST
 
 if [ "$RUN_TEST" != "n" ] && [ "$RUN_TEST" != "N" ]; then
     info "running test cycle with $AGENT_COUNT agents..."
-    bash "$SCRIPT_DIR/dialogue.sh" && ok "test cycle complete" || warn "test cycle failed"
+    bash "$SCRIPT_DIR/examples/hermes-demo/dialogue.sh" && ok "test cycle complete" || warn "test cycle failed"
 fi
 
 # ── 13. CRON SETUP ─────────────────────────────────────
@@ -446,7 +446,7 @@ ask "set up automated dialogue every 3 hours? [y/N] "
 read -r SETUP_CRON
 
 if [ "$SETUP_CRON" = "y" ] || [ "$SETUP_CRON" = "Y" ]; then
-    CRON_CMD="0 */3 * * * cd \"$SCRIPT_DIR\" && bash dialogue.sh >> cron.log 2>&1"
+    CRON_CMD="0 */3 * * * cd \"$SCRIPT_DIR\" && bash examples/hermes-demo/dialogue.sh >> cron.log 2>&1"
     (crontab -l 2>/dev/null | grep -v "icarus-daedalus"; echo "$CRON_CMD") | crontab -
     ok "cron job added: every 3 hours"
 fi
@@ -478,8 +478,8 @@ echo "    any platform can read any other platform's work"
 echo ""
 
 echo -e "  ${BOLD}commands${NC}"
-echo "    run dialogue:     bash $SCRIPT_DIR/dialogue.sh"
-echo "    add agent:        bash $SCRIPT_DIR/add-agent.sh --name scout --role 'researcher'"
+echo "    run dialogue:     bash $SCRIPT_DIR/examples/hermes-demo/dialogue.sh"
+echo "    add agent:        bash $SCRIPT_DIR/examples/hermes-demo/add-agent.sh --name scout --role 'researcher'"
 echo "    run tests:        bash $SCRIPT_DIR/test.sh"
 echo "    run tests:        bash $SCRIPT_DIR/test.sh"
 echo "    stop gateways:    pkill -f 'hermes gateway run'"

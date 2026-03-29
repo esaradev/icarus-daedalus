@@ -42,8 +42,9 @@ fabric_push() {
     cd "$FABRIC_DIR"
     [ -d .git ] || fail "$FABRIC_DIR is not a git repo. run: bash fabric-sync.sh init"
 
-    # Stage new/changed .md files and index.json
-    git add *.md index.json 2>/dev/null || true
+    # Stage new/changed files separately so one missing file doesn't block others
+    git add *.md 2>/dev/null || true
+    git add index.json 2>/dev/null || true
     git add cold/*.md 2>/dev/null || true
 
     # Check if there's anything to commit
