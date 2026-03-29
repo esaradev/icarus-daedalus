@@ -384,6 +384,17 @@ ENVEOF
     # skills
     [ -d "$SCRIPT_DIR/skills" ] && cp -r "$SCRIPT_DIR/skills/"* "$h/skills/" 2>/dev/null || true
 
+    # fabric-memory plugin (auto-writes to fabric, loads context on start)
+    mkdir -p "$h/plugins"
+    if [ -d "$SCRIPT_DIR/plugins/fabric-memory" ]; then
+        cp -r "$SCRIPT_DIR/plugins/fabric-memory" "$h/plugins/"
+    fi
+
+    # set agent name env var for the plugin
+    if ! grep -q "HERMES_AGENT_NAME" "$h/.env" 2>/dev/null; then
+        echo "HERMES_AGENT_NAME=$n" >> "$h/.env"
+    fi
+
     ok "  $n -> $h"
 done
 

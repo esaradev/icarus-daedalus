@@ -1,0 +1,8 @@
+name: fabric-memory
+version: 0.1.0
+description: Automatic shared memory via the Icarus Memory Protocol. Writes to ~/fabric/ after sessions, loads context at session start, captures decisions from LLM responses.
+author: icarus-daedalus
+provides_hooks:
+  - on_session_start
+  - on_session_end
+  - post_llm_call

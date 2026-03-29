@@ -33,9 +33,17 @@ You need an Anthropic API key and tokens for whichever platforms you want. The w
 
 ## How it works
 
-`dialogue.sh` calls the Claude API as each agent in sequence. Before each cycle, it reads both conversation logs. After each cycle, it writes entries to `~/fabric/` as markdown files with YAML frontmatter and updates `~/.hermes-*/memories/MEMORY.md` so hermes gateways pick up the context on restart.
+Memory is fully automatic via the `fabric-memory` hermes plugin. No agent ever calls `fabric_write`. The plugin does it.
 
-Agents recall work across platforms because every platform writes to `~/fabric/`. Telegram, Discord, Slack, WhatsApp, Signal, Email -- the memory layer doesn't distinguish between them.
+- **on_session_start**: loads recent fabric entries and injects them into the agent's context. The agent starts every session already knowing what happened on other platforms.
+- **on_session_end**: writes a summary of the session to `~/fabric/`. Every conversation becomes shared memory.
+- **post_llm_call**: detects decisions, completions, and important information in the agent's responses and auto-writes those to `~/fabric/` in real time.
+
+The plugin installs automatically during `bash setup.sh`. Zero manual steps. Zero friction.
+
+For the dialogue loop (`dialogue.sh`), agents also write to `~/fabric/` and `~/.hermes-*/memories/MEMORY.md` after each cycle. Both paths feed the shared brain.
+
+Requires hermes v0.5.0+ (plugin hooks for `on_session_start`, `on_session_end`, `post_llm_call` were added in v0.5.0).
 
 ## Proof
 
@@ -149,5 +157,6 @@ daedalus-SOUL.md     daedalus personality
 icarus-log.md        7 cycles of icarus thoughts and questions
 daedalus-log.md      7 cycles of daedalus responses and challenges
 PROTOCOL.md          memory format spec
+plugins/fabric-memory/ hermes plugin -- auto-writes to fabric, loads context, captures decisions
 skills/fabric-memory/ hermes skill -- teaches any agent to use the fabric
 ```
