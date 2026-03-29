@@ -393,6 +393,8 @@ ENVEOF
     mkdir -p "$h/plugins"
     if [ -d "$SCRIPT_DIR/plugins/fabric-memory" ]; then
         cp -r "$SCRIPT_DIR/plugins/fabric-memory" "$h/plugins/"
+        # Copy retrieval helper into the plugin so it works from any install location
+        [ -f "$SCRIPT_DIR/fabric-retrieve.py" ] && cp "$SCRIPT_DIR/fabric-retrieve.py" "$h/plugins/fabric-memory/"
     fi
 
     # set agent name env var for the plugin

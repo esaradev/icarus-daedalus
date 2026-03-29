@@ -189,11 +189,23 @@ echo "  learning_rate: $FT_LR"
 echo "  checkpoints:  $FT_CHECKPOINTS"
 echo "  suffix:       $FT_SUFFIX"
 
-# Together rejects requests where batch_size, learning_rate, or n_checkpoints are zero.
-# All three must be explicitly set.
+# Build payload safely via Python to avoid shell interpolation bugs
+FT_PAYLOAD=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'training_file': sys.argv[1],
+    'model': sys.argv[2],
+    'n_epochs': int(sys.argv[3]),
+    'suffix': sys.argv[4],
+    'batch_size': int(sys.argv[5]),
+    'learning_rate': float(sys.argv[6]),
+    'n_checkpoints': int(sys.argv[7]),
+}))
+" "$FILE_ID" "$FT_MODEL" "$FT_EPOCHS" "$FT_SUFFIX" "$FT_BATCH" "$FT_LR" "$FT_CHECKPOINTS")
+
 FT_RAW=$(http_post -X POST "https://api.together.xyz/v1/fine-tunes" \
     -H "Content-Type: application/json" \
-    -d "{\"training_file\": \"$FILE_ID\", \"model\": \"$FT_MODEL\", \"n_epochs\": $FT_EPOCHS, \"suffix\": \"$FT_SUFFIX\", \"batch_size\": $FT_BATCH, \"learning_rate\": $FT_LR, \"n_checkpoints\": $FT_CHECKPOINTS}")
+    -d "$FT_PAYLOAD")
 
 split_http "$FT_RAW"
 assert_http "fine-tune"

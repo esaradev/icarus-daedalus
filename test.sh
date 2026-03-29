@@ -471,6 +471,29 @@ else:
 
 rm -rf "$RD"
 
+# Test: oversized entry skipped by budget
+python3 -c "
+import os; os.environ['FABRIC_DIR'] = '$RD'
+from pathlib import Path
+import importlib.util
+spec = importlib.util.spec_from_file_location('fr', '$SCRIPT_DIR/fabric-retrieve.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.FABRIC_DIR = Path('$RD')
+
+# max_tokens=50 should skip all entries (each is ~40+ tokens)
+results = mod.retrieve('billing', max_results=10, max_tokens=10)
+total_tokens = sum(len(e.get('_full', '')) // 4 for _, e in results)
+assert total_tokens <= 15, f'oversized entry not skipped: ~{total_tokens} tokens with budget 10'
+print('  pass: oversized entries skipped by budget')
+" || fail "oversized entry budget"
+
+# Test: self-train payload built via Python (no shell interpolation)
+grep -q "python3 -c" "$SCRIPT_DIR/scripts/self-train.sh" && grep -q "json.dumps" "$SCRIPT_DIR/scripts/self-train.sh" && pass "payload built via Python json.dumps" || fail "payload still uses shell interpolation"
+
+# Test: setup.sh copies fabric-retrieve.py into plugin dir
+grep -q "fabric-retrieve.py" "$SCRIPT_DIR/setup.sh" && pass "setup copies retrieval helper" || fail "setup missing retrieval copy"
+
 echo ""
 echo "together.jsonl format"
 echo ""
