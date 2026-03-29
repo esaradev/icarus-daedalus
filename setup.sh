@@ -103,6 +103,10 @@ ask "model [claude-sonnet-4-20250514]: "
 read -r MODEL_CHOICE
 MODEL="${MODEL_CHOICE:-claude-sonnet-4-20250514}"
 
+ask "together AI key (optional, for self-training): "
+read -r TOGETHER_KEY
+TOGETHER_KEY=$(echo "$TOGETHER_KEY" | tr -d ' ')
+
 # ── 4. PLATFORMS ───────────────────────────────────────
 echo ""
 info "which platforms? (select all you want)"
@@ -377,6 +381,7 @@ HERMES_INFERENCE_PROVIDER=anthropic
 LLM_MODEL=$MODEL
 GATEWAY_ALLOW_ALL_USERS=true${ENV_PLATFORMS[$i]}
 ENVEOF
+    [ -n "$TOGETHER_KEY" ] && echo "TOGETHER_API_KEY=$TOGETHER_KEY" >> "$h/.env"
 
     # memory
     touch "$h/memories/MEMORY.md"

@@ -300,6 +300,19 @@ dupes=$(echo "$output" | sort | uniq -d | wc -l | tr -d ' ')
 [ "$dupes" -eq 0 ] && pass "on-start.sh no duplicates" || fail "on-start.sh duplicates found ($dupes)"
 
 echo ""
+echo "self-train"
+echo ""
+
+# Test: exits with message when TOGETHER_API_KEY not set
+# Use fake HOME so it can't find .env files with real keys
+st_out=$(TOGETHER_API_KEY="" HOME="$T/nohome" bash "$SCRIPT_DIR/scripts/self-train.sh" 2>&1 || true)
+echo "$st_out" | grep -q "TOGETHER_API_KEY not set" && pass "self-train exits when no API key" || fail "self-train missing key message"
+
+# Test: exits with warning when < 20 pairs
+st_out=$(TOGETHER_API_KEY="fake-key-for-test" bash "$SCRIPT_DIR/scripts/self-train.sh" 2>&1 || true)
+echo "$st_out" | grep -q "warning\|minimum" && pass "self-train warns on low pairs" || fail "self-train low pair warning"
+
+echo ""
 echo "────────────────────────"
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && echo "  all tests pass" || echo "  FAILURES"

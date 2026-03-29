@@ -62,6 +62,12 @@ python3 export-training.py --output ./training-data/
 
 Three pair types: basic task completion, review-correction (original + feedback → improved version), and cross-platform context (memory from platform A used on platform B). The longer agents run, the more data accumulates. Reviews and cross-platform recalls produce the highest-quality training signal.
 
+## Self-training
+
+Agents accumulate training data as they work. When you have enough pairs (20+), fine-tune a cheaper model that mirrors your agents' behavior. The fine-tuned model runs on Together AI at a fraction of the cost.
+
+Run the pipeline directly: `bash scripts/self-train.sh`. Or tell your agent on any platform: "train yourself" and it handles export, upload, fine-tune, and polling through the `skills/self-train/` skill. Switch between the fine-tuned model and Claude at any time.
+
 ## Hermes plugin
 
 Zero-friction memory via hermes v0.5.0 plugin hooks. Install the `plugins/fabric-memory/` plugin in any hermes agent's home directory:
@@ -111,6 +117,8 @@ cli/fabric.js            npx icarus-fabric init|status|context|sync
 hooks/on-stop.sh         Claude Code auto-write hook
 hooks/on-start.sh        Claude Code context loading hook
 plugins/fabric-memory/   hermes plugin (on_session_end, on_session_start, post_llm_call)
+scripts/self-train.sh    export + upload + fine-tune pipeline for Together AI
 skills/fabric-memory/    hermes skill for manual fabric access
+skills/self-train/       hermes skill for conversational self-training
 examples/hermes-demo/    two-agent demo with dialogue loop, compaction, multi-platform
 ```
