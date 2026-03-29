@@ -66,17 +66,21 @@ http_post() {
 http_get() {
     _auth_header | curl -s -w '\n%{http_code}' -H @- "$@"
 }
-check_http() {
-    local response="$1" label="$2"
-    local http_code body
-    http_code=$(echo "$response" | tail -1)
-    body=$(echo "$response" | sed '$d')
-    if [ "$http_code" != "200" ] && [ "$http_code" != "201" ]; then
-        echo "error: $label returned HTTP $http_code"
-        echo "$body"
+split_http() {
+    # Splits curl response into body (HTTP_BODY) and status code (HTTP_CODE).
+    # Sets global vars, doesn't use command substitution.
+    local response="$1"
+    HTTP_CODE=$(echo "$response" | tail -1)
+    HTTP_BODY=$(echo "$response" | sed '$d')
+}
+assert_http() {
+    # Check HTTP_CODE is 200 or 201. Prints error and exits if not.
+    local label="$1"
+    if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+        echo "error: $label returned HTTP $HTTP_CODE"
+        echo "$HTTP_BODY"
         exit 1
     fi
-    echo "$body"
 }
 
 # ── Step 1: Export ──
@@ -114,11 +118,11 @@ with open(sys.argv[1]) as f:
             continue
         try:
             obj = json.loads(line)
-            if 'messages' not in obj:
-                print(f'  line {i}: missing messages field')
+            if 'text' not in obj:
+                print(f'  line {i}: missing text field')
                 errors += 1
-            elif not isinstance(obj['messages'], list) or len(obj['messages']) < 2:
-                print(f'  line {i}: messages must have at least 2 entries')
+            elif not obj['text'].strip():
+                print(f'  line {i}: empty text field')
                 errors += 1
         except json.JSONDecodeError as e:
             print(f'  line {i}: invalid JSON: {e}')
@@ -127,23 +131,24 @@ if errors:
     print(f'{errors} validation errors. fix before uploading.')
     sys.exit(1)
 print(f'  {i} lines validated, all OK')
-" "$OUTPUT_DIR/openai.jsonl" || { echo "error: JSONL validation failed"; exit 1; }
+" "$OUTPUT_DIR/together.jsonl" || { echo "error: JSONL validation failed"; exit 1; }
 
 # ── Step 3: Upload ──
 echo ""
 echo "step 3: uploading to Together AI..."
 UPLOAD_RAW=$(http_post -X POST "https://api.together.xyz/v1/files/upload" \
     -F "purpose=fine-tune" \
-    -F "file_name=openai.jsonl" \
-    -F "file=@$OUTPUT_DIR/openai.jsonl")
+    -F "file_name=together.jsonl" \
+    -F "file=@$OUTPUT_DIR/together.jsonl")
 
-UPLOAD_BODY=$(check_http "$UPLOAD_RAW" "upload")
+split_http "$UPLOAD_RAW"
+assert_http "upload"
 
-FILE_ID=$(echo "$UPLOAD_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+FILE_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
 
 if [ -z "$FILE_ID" ]; then
     echo "error: upload succeeded but no file ID in response"
-    echo "$UPLOAD_BODY"
+    echo "$HTTP_BODY"
     exit 1
 fi
 
@@ -156,13 +161,14 @@ FT_RAW=$(http_post -X POST "https://api.together.xyz/v1/fine-tunes" \
     -H "Content-Type: application/json" \
     -d "{\"training_file\": \"$FILE_ID\", \"model\": \"meta-llama/Meta-Llama-3.1-8B-Instruct-Reference\", \"n_epochs\": 3, \"suffix\": \"icarus-v1\"}")
 
-FT_BODY=$(check_http "$FT_RAW" "fine-tune")
+split_http "$FT_RAW"
+assert_http "fine-tune"
 
-JOB_ID=$(echo "$FT_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+JOB_ID=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
 
 if [ -z "$JOB_ID" ]; then
     echo "error: fine-tune request accepted but no job ID"
-    echo "$FT_BODY"
+    echo "$HTTP_BODY"
     exit 1
 fi
 

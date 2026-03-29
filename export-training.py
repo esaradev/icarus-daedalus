@@ -236,6 +236,11 @@ def to_openai(pair):
     ]}
 
 
+def to_together(pair):
+    """Convert to Together AI fine-tuning format (Llama instruct template)."""
+    return {"text": f"<s>[INST] {pair['input']} [/INST] {pair['output']}</s>"}
+
+
 def to_hf(pair):
     """Convert to Hugging Face dataset format."""
     return {
@@ -279,6 +284,11 @@ def main():
         for p in pairs:
             f.write(json.dumps(to_openai(p)) + "\n")
 
+    # Together AI format (Llama instruct template)
+    with open(out / "together.jsonl", "w") as f:
+        for p in pairs:
+            f.write(json.dumps(to_together(p)) + "\n")
+
     # HuggingFace format
     with open(out / "hf-dataset.jsonl", "w") as f:
         for p in pairs:
@@ -305,6 +315,7 @@ def main():
         print(f"    {t}: {c}")
     print(f"  files:")
     print(f"    {out}/openai.jsonl")
+    print(f"    {out}/together.jsonl")
     print(f"    {out}/hf-dataset.jsonl")
     print(f"    {out}/raw-pairs.json")
 
