@@ -1,4 +1,4 @@
-"""Lifecycle hooks — automatic memory injection, decision capture, creative tracking."""
+"""Lifecycle hooks — memory capture, decision detection, creative tracking."""
 
 import logging
 import re
@@ -7,17 +7,23 @@ from . import state
 
 logger = logging.getLogger(__name__)
 
-# ── Decision detection (from fabric-memory) ──────────────
+# ── Narrow regex for entry writing (decisions worth persisting) ──
 _DECISION_RE = re.compile(
-    r"(?i)\b(decided|resolved|completed|fixed|built|created|deployed|shipped|reviewed|approved|rejected)\b"
+    r"(?i)\b(decided|resolved|completed|fixed|deployed|shipped|reviewed|approved|rejected)\b"
 )
-
-# ── Creative pattern detection ───────────────────────────
+_OUTCOME_RE = re.compile(
+    r"(?i)(result:|outcome:|conclusion:|because|root cause|instead of|\d+%|\d+x)"
+)
 _COMPLETION_RE = re.compile(
     r"(?i)\b(completed|finished|done|shipped|deployed|resolved|closed|merged|fixed)\b"
 )
 _REVIEW_RE = re.compile(
     r"(?i)\b(reviewed|review:|feedback:|MUST FIX|SHOULD FIX|approved|rejected|looks good|lgtm|nit:)\b"
+)
+
+# ── Broad regex for creative tracking (theme extraction, not entry writing) ──
+_THEME_RE = re.compile(
+    r"(?i)\b(decided|resolved|completed|fixed|deployed|shipped|reviewed|approved|rejected|built|created)\b"
 )
 _EVAL_RE = re.compile(
     r"(?i)\b(worked well|didn't work|failed|succeeded|learned|noticed|realized|discovered|finding|insight|improvement)\b"
@@ -31,7 +37,7 @@ _STOPWORDS = frozenset(
     "than over such make made most each does done being".split()
 )
 
-# ── Topic overlap tracking (from fabric-memory) ─────────
+# ── Topic overlap tracking ──
 _last_query_tokens: set = set()
 
 
@@ -59,20 +65,18 @@ def _extract_sentence(text, pattern):
 # ── Hooks ────────────────────────────────────────────────
 
 def on_session_start(session_id="", platform="", **kwargs):
-    """Load context: SOUL + recent entries + cross-agent feedback + creative state."""
+    """Load context: SOUL + pending handoffs + recent entries + creative state."""
     global _last_query_tokens
     _last_query_tokens = set()
     state.session_id = session_id
     state.exchanges = []
 
-    # bump creative cycle
     creative = state.load_creative()
     creative["cycle"] += 1
     state.save_creative(creative)
 
     parts = []
 
-    # personality
     soul = state.load_soul()
     if soul:
         parts.append(soul.strip())
@@ -142,7 +146,6 @@ def pre_llm_call(session_id="", user_message="", is_first_turn=False, **kwargs):
     if not tokens:
         return None
 
-    # skip if topic hasn't changed (>60% overlap)
     if _last_query_tokens:
         overlap = len(tokens & _last_query_tokens) / max(len(tokens), 1)
         if overlap > 0.6:
@@ -165,7 +168,7 @@ def pre_llm_call(session_id="", user_message="", is_first_turn=False, **kwargs):
 
 
 def post_llm_call(session_id="", user_message="", assistant_response="", platform="", **kwargs):
-    """Capture decisions + detect creative patterns."""
+    """Capture high-value decisions + creative tracking."""
     if not assistant_response:
         return
 
@@ -177,19 +180,20 @@ def post_llm_call(session_id="", user_message="", assistant_response="", platfor
     agent = state.AGENT_NAME or "agent"
     plat = platform or "cli"
 
-    # capture decisions
-    if _DECISION_RE.search(assistant_response) and len(assistant_response) > 100:
+    # capture decisions: requires decision keyword + outcome indicator + >200 chars
+    if (_DECISION_RE.search(assistant_response)
+            and _OUTCOME_RE.search(assistant_response)
+            and len(assistant_response) > 200):
         summary = assistant_response[:80].replace("\n", " ")
-        # detect if this completes work (status: completed) or is still open
         entry_status = "completed" if _COMPLETION_RE.search(assistant_response) else ""
         state.write_entry("decision", assistant_response[:500], summary,
-                         platform=plat, status=entry_status)
+                         platform=plat, status=entry_status, training_value="high")
 
-    # creative tracking
+    # creative tracking (uses broader _THEME_RE, doesn't write entries)
     creative = state.load_creative()
     changed = False
 
-    if _DECISION_RE.search(assistant_response):
+    if _THEME_RE.search(assistant_response):
         theme = _extract_theme(assistant_response)
         if theme and theme not in creative["themes"]:
             creative["themes"].append(theme)
@@ -215,21 +219,28 @@ def post_llm_call(session_id="", user_message="", assistant_response="", platfor
 
 
 def on_session_end(session_id="", platform="", completed=False, **kwargs):
-    """Write session summary to fabric + update MEMORY.md."""
+    """Write session summary only if the session had substantive work."""
+    creative = state.load_creative()
+
+    # always update MEMORY.md
+    state.write_memory_file(creative)
+
     if not state.exchanges:
         return
 
-    agent = state.AGENT_NAME or "agent"
     plat = platform or "cli"
 
-    parts = [ex["assistant"] for ex in state.exchanges[-5:] if ex.get("assistant", "").strip()]
-    if not parts:
+    # only consider substantial exchanges (assistant response > 100 chars)
+    substantive = [ex for ex in state.exchanges
+                   if len(ex.get("assistant", "").strip()) > 100]
+    if len(substantive) < 2:
         return
 
-    content = "\n\n".join(parts)
+    # write the single best exchange, not a join of 5
+    best = max(substantive, key=lambda ex: len(ex.get("assistant", "")))
+    content = best["assistant"]
     summary = content[:80].replace("\n", " ")
-    state.write_entry("session", content, summary, platform=plat)
 
-    # update MEMORY.md
-    creative = state.load_creative()
-    state.write_memory_file(creative)
+    tv = "high" if (_DECISION_RE.search(content) or _COMPLETION_RE.search(content)) else "low"
+
+    state.write_entry("session", content, summary, platform=plat, training_value=tv)

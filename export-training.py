@@ -141,30 +141,40 @@ def extract_pairs(entries):
         body = e.get("body", "")
         summary = e.get("summary", "")
 
+        tv = e.get("training_value", "")
+
         if not body or len(body) < 20:
             continue
+
+        # ── OUTCOME PAIR: focused summary → outcome ──
+        if e.get("outcome"):
+            pairs.append(make_pair(
+                f"[outcome] {summary}",
+                e["outcome"],
+                {"type": "outcome", "agent": agent, "platform": platform, "training_value": tv},
+            ))
 
         # ── BASIC PAIR: type as task, body as response ──
         if entry_type in ("code-session", "task", "resolution", "research"):
             user_msg = f"[{entry_type}] {summary}" if summary else f"Complete this {entry_type}"
-            pairs.append(make_pair(user_msg, body, {"type": "basic", "agent": agent, "platform": platform}))
+            pairs.append(make_pair(user_msg, body, {"type": "basic", "agent": agent, "platform": platform, "training_value": tv}))
 
         elif entry_type == "dialogue":
             # For dialogue, the thought IS the output
             user_msg = f"[dialogue] Respond as {agent} in a multi-agent conversation."
-            pairs.append(make_pair(user_msg, body, {"type": "dialogue", "agent": agent, "platform": platform}))
+            pairs.append(make_pair(user_msg, body, {"type": "dialogue", "agent": agent, "platform": platform, "training_value": tv}))
 
         elif entry_type == "decision":
             user_msg = f"[decision] What did you decide?"
-            pairs.append(make_pair(user_msg, body, {"type": "decision", "agent": agent, "platform": platform}))
+            pairs.append(make_pair(user_msg, body, {"type": "decision", "agent": agent, "platform": platform, "training_value": tv}))
 
         elif entry_type == "session":
             user_msg = f"[session] Summarize what was accomplished."
-            pairs.append(make_pair(user_msg, body, {"type": "session", "agent": agent, "platform": platform}))
+            pairs.append(make_pair(user_msg, body, {"type": "session", "agent": agent, "platform": platform, "training_value": tv}))
 
         elif entry_type == "review":
             user_msg = f"[review] Review the following code or work."
-            pairs.append(make_pair(user_msg, body, {"type": "review", "agent": agent, "platform": platform}))
+            pairs.append(make_pair(user_msg, body, {"type": "review", "agent": agent, "platform": platform, "training_value": tv}))
 
         else:
             user_msg = f"[{entry_type or 'task'}] {summary or 'Complete this task'}"
@@ -258,6 +268,8 @@ def main():
     parser = argparse.ArgumentParser(description="Export fabric entries as fine-tuning data")
     parser.add_argument("--output", default="./training-data", help="Output directory")
     parser.add_argument("--fabric-dir", default=None, help="Fabric directory (default: ~/fabric/)")
+    parser.add_argument("--mode", choices=["high-precision", "normal", "high-volume"],
+                        default="normal", help="Export quality mode")
     args = parser.parse_args()
 
     global FABRIC_DIR
@@ -268,16 +280,44 @@ def main():
         print(f"error: {FABRIC_DIR} does not exist")
         sys.exit(1)
 
-    entries = scan_all()
-    if not entries:
+    all_entries = scan_all()
+    if not all_entries:
         print("no fabric entries found")
         sys.exit(0)
+
+    # filter by mode
+    excluded = 0
+    if args.mode == "high-precision":
+        entries = [e for e in all_entries
+                   if e.get("training_value") == "high"
+                   or e.get("status") == "completed"
+                   or (e.get("type") == "review" and e.get("review_of"))]
+        excluded = len(all_entries) - len(entries)
+    elif args.mode == "normal":
+        entries = [e for e in all_entries if e.get("training_value") != "low"]
+        excluded = len(all_entries) - len(entries)
+    else:
+        entries = all_entries
 
     pairs, review_count, xplat_count = extract_pairs(entries)
 
     if not pairs:
         print("no training pairs extracted")
         sys.exit(0)
+
+    # weight high-value pairs
+    weighted = []
+    for p in pairs:
+        meta = p.get("metadata", {})
+        ptype = meta.get("type", "")
+        tv = meta.get("training_value", "")
+        if ptype == "review-correction":
+            weighted.extend([p] * 3)
+        elif tv == "high":
+            weighted.extend([p] * 2)
+        else:
+            weighted.append(p)
+    pairs = weighted
 
     # Write outputs
     out = Path(args.output)

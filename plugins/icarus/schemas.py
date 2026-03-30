@@ -88,6 +88,11 @@ FABRIC_WRITE = {
                 "type": "string",
                 "description": "When status='open': the agent who should pick this up. Required for the entry to appear in their fabric_pending.",
             },
+            "training_value": {
+                "type": "string",
+                "enum": ["high", "normal", "low"],
+                "description": "Training quality signal. high = decisions with outcomes, completed reviews, successful fixes. low = generic chatter. Affects export filtering.",
+            },
         },
         "required": ["type", "content", "summary"],
     },
@@ -137,17 +142,48 @@ FABRIC_SEARCH = {
     },
 }
 
-FABRIC_EXPORT = {
-    "name": "fabric_export",
+FABRIC_CURATE = {
+    "name": "fabric_curate",
     "description": (
-        "Export all fabric entries as fine-tuning training pairs. Generates "
-        "OpenAI, Together AI, and HuggingFace format JSONL files. Use before "
-        "fabric_train to prepare training data. Returns pair count, token "
-        "estimate, and breakdown by type."
+        "Set the training value of a fabric entry. Affects which entries are "
+        "included when exporting training data. Use 'high' for decisions with "
+        "outcomes, completed reviews, and successful fixes. Use 'normal' for "
+        "standard work. Use 'low' for generic session summaries and chatter. "
+        "high-precision export mode only includes high-value entries."
     ),
     "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "entry_id": {
+                "type": "string",
+                "description": "The entry ID (8 hex chars) to update",
+            },
+            "training_value": {
+                "type": "string",
+                "enum": ["high", "normal", "low"],
+                "description": "Training value: high, normal, or low",
+            },
+        },
+        "required": ["entry_id", "training_value"],
+    },
+}
+
+FABRIC_EXPORT = {
+    "name": "fabric_export",
+    "description": (
+        "Export fabric entries as fine-tuning training pairs. Generates "
+        "OpenAI, Together AI, and HuggingFace format JSONL files. "
+        "Use mode to control quality vs volume tradeoff."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["high-precision", "normal", "high-volume"],
+                "description": "high-precision: only high-value + completed + linked reviews. normal: excludes low-value (default). high-volume: everything.",
+            },
+        },
         "required": [],
     },
 }
@@ -156,9 +192,9 @@ FABRIC_TRAIN = {
     "name": "fabric_train",
     "description": (
         "Start a fine-tuning job on Together AI using your fabric entries as "
-        "training data. Exports data, uploads, and kicks off training. Returns "
-        "immediately with a job ID — use fabric_train_status to check progress. "
-        "Requires TOGETHER_API_KEY in the agent's .env."
+        "training data. Exports, uploads, and kicks off training. Returns "
+        "immediately with a job ID. Use fabric_train_status to check progress, "
+        "fabric_eval to test the result, fabric_switch_model to activate it."
     ),
     "parameters": {
         "type": "object",
@@ -196,8 +232,7 @@ FABRIC_TRAIN_STATUS = {
     "name": "fabric_train_status",
     "description": (
         "Check the status of a Together AI fine-tuning job. If completed, returns "
-        "the output model ID that can be set in .env as LLM_MODEL. "
-        "Pass a job ID or omit to check the most recent job."
+        "the output model ID. Pass a job ID or omit to check the most recent job."
     ),
     "parameters": {
         "type": "object",
@@ -208,5 +243,71 @@ FABRIC_TRAIN_STATUS = {
             },
         },
         "required": [],
+    },
+}
+
+FABRIC_MODELS = {
+    "name": "fabric_models",
+    "description": (
+        "List all fine-tuned models trained from your fabric data. Shows job ID, "
+        "base model, output model, pair count, eval scores, and whether the model "
+        "is currently active. Use this to see your training history and decide "
+        "which model to evaluate or activate."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
+
+FABRIC_EVAL = {
+    "name": "fabric_eval",
+    "description": (
+        "Compare a candidate replacement model against the current model. "
+        "Runs both on eval prompts extracted from your high-value fabric entries. "
+        "Scores task completion, format compliance, and style match. "
+        "Results are saved to the model registry. Requires TOGETHER_API_KEY."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "candidate_model": {
+                "type": "string",
+                "description": "The fine-tuned model ID to evaluate",
+            },
+            "base_model": {
+                "type": "string",
+                "description": "Model to compare against (default: current LLM_MODEL)",
+            },
+            "sample_count": {
+                "type": "integer",
+                "description": "Number of eval prompts to run (default: 10)",
+            },
+        },
+        "required": ["candidate_model"],
+    },
+}
+
+FABRIC_SWITCH_MODEL = {
+    "name": "fabric_switch_model",
+    "description": (
+        "Switch this agent to use a replacement model. Only switches if the "
+        "model has eval scores above the threshold. Updates .env with the new "
+        "model config and creates a backup of the current .env."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "model_id": {
+                "type": "string",
+                "description": "The fine-tuned model ID to switch to (from fabric_models)",
+            },
+            "min_eval_score": {
+                "type": "number",
+                "description": "Minimum average eval score required to switch (default: 0.7)",
+            },
+        },
+        "required": ["model_id"],
     },
 }

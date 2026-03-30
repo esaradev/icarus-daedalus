@@ -9,7 +9,6 @@ def _json(payload) -> str:
 
 
 def fabric_recall(args: dict, **kwargs) -> str:
-    """Smart ranked retrieval from fabric."""
     query = args.get("query", "").strip()
     if not query:
         return _json({"error": "No query provided"})
@@ -26,7 +25,6 @@ def fabric_recall(args: dict, **kwargs) -> str:
 
 
 def fabric_write(args: dict, **kwargs) -> str:
-    """Write a new entry to fabric."""
     entry_type = args.get("type", "").strip()
     content = args.get("content", "").strip()
     summary = args.get("summary", "").strip()
@@ -52,6 +50,9 @@ def fabric_write(args: dict, **kwargs) -> str:
             return _json({"error": f"revises must be agent:id (e.g. icarus:a3f29b01), got '{revises}'"})
         if not state.has_entry_ref(revises):
             return _json({"error": f"revises points to a missing entry: '{revises}'"})
+    tv = args.get("training_value", "").strip()
+    if tv and tv not in ("high", "normal", "low"):
+        return _json({"error": f"training_value must be high/normal/low, got '{tv}'"})
     try:
         path = state.write_entry(
             entry_type=entry_type,
@@ -64,6 +65,7 @@ def fabric_write(args: dict, **kwargs) -> str:
             revises=revises,
             customer_id=args.get("customer_id", ""),
             assigned_to=assigned_to,
+            training_value=tv,
         )
         return _json({"status": "written", "path": path})
     except Exception as e:
@@ -71,7 +73,6 @@ def fabric_write(args: dict, **kwargs) -> str:
 
 
 def fabric_search(args: dict, **kwargs) -> str:
-    """Keyword search across fabric entries."""
     query = args.get("query", "").strip()
     if not query:
         return _json({"error": "No query provided"})
@@ -83,7 +84,6 @@ def fabric_search(args: dict, **kwargs) -> str:
 
 
 def fabric_pending(args: dict, **kwargs) -> str:
-    """Show work waiting for this agent."""
     try:
         open_tasks, reviews, open_tickets = state.read_pending(
             customer_id=args.get("customer_id"),
@@ -98,11 +98,21 @@ def fabric_pending(args: dict, **kwargs) -> str:
         return _json({"error": str(e)})
 
 
-def fabric_export(args: dict, **kwargs) -> str:
-    """Export fabric entries as fine-tuning training pairs."""
+def fabric_curate(args: dict, **kwargs) -> str:
+    entry_id = args.get("entry_id", "").strip()
+    training_value = args.get("training_value", "").strip()
+    if not entry_id or training_value not in ("high", "normal", "low"):
+        return _json({"error": "Need entry_id and training_value (high/normal/low)"})
     try:
-        result = state.export_training()
-        # don't send raw training data back to the LLM
+        result = state.curate_entry(entry_id, training_value)
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_export(args: dict, **kwargs) -> str:
+    try:
+        result = state.export_training(mode=args.get("mode", "normal"))
         result.pop("_training_data", None)
         result.pop("training_data_path", None)
         return _json(result)
@@ -111,7 +121,6 @@ def fabric_export(args: dict, **kwargs) -> str:
 
 
 def fabric_train(args: dict, **kwargs) -> str:
-    """Start a Together AI fine-tune job."""
     try:
         result = state.start_training(
             model=args.get("model"),
@@ -127,9 +136,45 @@ def fabric_train(args: dict, **kwargs) -> str:
 
 
 def fabric_train_status(args: dict, **kwargs) -> str:
-    """Check fine-tune job status."""
     try:
         result = state.check_training(job_id=args.get("job_id"))
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_models(args: dict, **kwargs) -> str:
+    try:
+        registry = state.list_models()
+        return _json(registry)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_eval(args: dict, **kwargs) -> str:
+    candidate = args.get("candidate_model", "").strip()
+    if not candidate:
+        return _json({"error": "candidate_model is required"})
+    try:
+        result = state.run_eval(
+            candidate_model=candidate,
+            base_model=args.get("base_model"),
+            sample_count=args.get("sample_count", 10),
+        )
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_switch_model(args: dict, **kwargs) -> str:
+    model_id = args.get("model_id", "").strip()
+    if not model_id:
+        return _json({"error": "model_id is required"})
+    try:
+        result = state.switch_model(
+            model_id=model_id,
+            min_eval_score=args.get("min_eval_score", 0.7),
+        )
         return _json(result)
     except Exception as e:
         return _json({"error": str(e)})

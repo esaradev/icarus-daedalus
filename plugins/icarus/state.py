@@ -1,10 +1,11 @@
-"""Shared state: fabric I/O, retriever, training helpers, creative state."""
+"""Shared state: fabric I/O, retriever, training helpers, model registry."""
 
 import json
 import logging
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import tempfile
 import urllib.request
@@ -40,6 +41,30 @@ def _save_job_id(jid):
     _JOB_FILE.write_text(jid, "utf-8")
 
 
+# ── Model registry ───────────────────────────────────────
+_REGISTRY_FILE = (HERMES_HOME or Path.home()) / ".icarus-models.json"
+
+
+def _load_registry():
+    if _REGISTRY_FILE.exists():
+        try:
+            return json.loads(_REGISTRY_FILE.read_text("utf-8"))
+        except Exception:
+            pass
+    return {"models": [], "active_model": None}
+
+
+def _save_registry(registry):
+    try:
+        _REGISTRY_FILE.write_text(json.dumps(registry, indent=2), "utf-8")
+    except Exception as exc:
+        logger.warning("icarus: failed to save model registry: %s", exc)
+
+
+def list_models():
+    return _load_registry()
+
+
 # ── Creative state ───────────────────────────────────────
 _STATE_FILE = (HERMES_HOME or Path.home()) / ".icarus-state.json"
 
@@ -63,7 +88,8 @@ def save_creative(s):
 # ── Fabric I/O ───────────────────────────────────────────
 
 def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli",
-                status="", outcome="", review_of="", revises="", customer_id="", assigned_to=""):
+                status="", outcome="", review_of="", revises="", customer_id="",
+                assigned_to="", training_value=""):
     """Write a fabric entry with full schema v1 fields. Returns the filepath."""
     FABRIC_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
@@ -105,6 +131,8 @@ def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli
         lines.append(f"customer_id: {customer_id}")
     if assigned_to:
         lines.append(f"assigned_to: {assigned_to}")
+    if training_value:
+        lines.append(f"training_value: {training_value}")
     lines.extend(["---", "", content])
 
     path = FABRIC_DIR / filename
@@ -173,7 +201,8 @@ def _parse_head(filepath, max_bytes=800):
     text = filepath.read_text("utf-8")[:max_bytes]
     fields = {}
     for key in ("agent", "type", "tier", "status", "summary", "timestamp",
-                "review_of", "revises", "customer_id", "assigned_to", "id", "outcome"):
+                "review_of", "revises", "customer_id", "assigned_to", "id",
+                "outcome", "training_value"):
         m = re.search(rf"^{key}: (.+)$", text, re.MULTILINE)
         if m:
             fields[key] = m.group(1)
@@ -201,14 +230,33 @@ def has_entry_ref(ref):
     return False
 
 
-def read_pending(customer_id=None):
-    """Find entries needing this agent's attention.
+def curate_entry(entry_id, training_value):
+    """Update the training_value field on an existing fabric entry."""
+    if training_value not in ("high", "normal", "low"):
+        return {"error": f"training_value must be high/normal/low, got '{training_value}'"}
 
-    Returns three lists:
-      open_tasks  - status:open entries explicitly assigned to THIS agent
-      reviews     - type:review entries from OTHER agents that review THIS agent's work
-      open_tickets - status:open customer-scoped entries explicitly assigned to THIS agent
-    """
+    for d in (FABRIC_DIR, FABRIC_DIR / "cold"):
+        if not d.exists():
+            continue
+        for f in d.glob("*.md"):
+            head = f.read_text("utf-8")[:400]
+            m = re.search(r"^id: (.+)$", head, re.MULTILINE)
+            if not m or m.group(1).strip() != entry_id:
+                continue
+
+            text = f.read_text("utf-8")
+            if re.search(r"^training_value: .+$", text, re.MULTILINE):
+                text = re.sub(r"^training_value: .+$", f"training_value: {training_value}", text, count=1, flags=re.MULTILINE)
+            else:
+                text = text.replace("\n---\n", f"\ntraining_value: {training_value}\n---\n", 1)
+            f.write_text(text, "utf-8")
+            return {"status": "updated", "file": f.name, "training_value": training_value}
+
+    return {"error": f"entry {entry_id} not found"}
+
+
+def read_pending(customer_id=None):
+    """Find entries needing this agent's attention."""
     if not FABRIC_DIR.exists():
         return [], [], []
 
@@ -220,10 +268,8 @@ def read_pending(customer_id=None):
     for f in sorted(FABRIC_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
         h = _parse_head(f)
         entry_agent = h.get("agent", "")
-
         assigned_to = h.get("assigned_to", "").strip()
 
-        # open tasks from other agents that explicitly target this agent
         if h.get("status") == "open" and entry_agent != agent:
             if not agent or assigned_to != agent:
                 continue
@@ -231,13 +277,11 @@ def read_pending(customer_id=None):
                 continue
             open_tasks.append(h)
 
-        # reviews of my work (from other agents)
         if h.get("type") == "review" and entry_agent != agent:
             ref = h.get("review_of", "")
             if agent and ref.startswith(f"{agent}:"):
                 reviews.append(h)
 
-        # open tickets with customer_id explicitly assigned to this agent
         if h.get("status") == "open" and h.get("customer_id"):
             if not agent or assigned_to != agent:
                 continue
@@ -273,7 +317,6 @@ def search_entries(query, limit=10):
             m = re.search(r"^agent: (.+)$", text[:500], re.MULTILINE)
             if m:
                 agent = m.group(1)
-            # find matching lines
             matches = [line.strip() for line in text.split("\n") if q in line.lower()][:3]
             results.append({"file": f.name, "agent": agent, "summary": summary, "matches": matches})
             if len(results) >= limit:
@@ -331,7 +374,6 @@ def _together_key():
     key = os.environ.get("TOGETHER_API_KEY", "")
     if key:
         return key
-    # check agent .env
     if HERMES_HOME and (HERMES_HOME / ".env").exists():
         for line in (HERMES_HOME / ".env").read_text().split("\n"):
             if line.startswith("TOGETHER_API_KEY="):
@@ -340,7 +382,7 @@ def _together_key():
 
 
 def _together_request(method, url, data=None):
-    """Make an authenticated request to Together AI. Returns parsed JSON."""
+    """Make an authenticated request to Together AI."""
     key = _together_key()
     if not key:
         raise RuntimeError("TOGETHER_API_KEY not set")
@@ -354,25 +396,23 @@ def _together_request(method, url, data=None):
     return json.loads(resp.read())
 
 
-def export_training():
+def export_training(mode="normal"):
     """Export fabric entries as training pairs. Returns stats dict."""
     export_script = PLUGIN_DIR / "export-training.py"
     if not export_script.exists():
-        # try repo root
         repo_root = PLUGIN_DIR.parent.parent
         export_script = repo_root / "export-training.py"
     if not export_script.exists():
         return {"error": "export-training.py not found"}
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        result = subprocess.run(
-            ["python3", str(export_script), "--output", tmpdir],
-            capture_output=True, text=True, timeout=60,
-        )
+        cmd = ["python3", str(export_script), "--output", tmpdir]
+        if mode != "normal":
+            cmd.extend(["--mode", mode])
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             return {"error": result.stderr or "export failed"}
 
-        # parse output for stats
         output = result.stdout
         pairs = 0
         m = re.search(r"total pairs:\s+(\d+)", output)
@@ -384,7 +424,6 @@ def export_training():
         if m:
             tokens = int(m.group(1).replace(",", ""))
 
-        # read the together.jsonl for upload
         together_path = Path(tmpdir) / "together.jsonl"
         training_data = together_path.read_text("utf-8") if together_path.exists() else ""
 
@@ -398,13 +437,12 @@ def export_training():
 
 
 def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_rate=None, checkpoints=None):
-    """Export, upload, and start a Together AI fine-tune. Returns job ID."""
+    """Export, upload, and start a Together AI fine-tune."""
     key = _together_key()
     if not key:
         return {"error": "TOGETHER_API_KEY not set in .env"}
 
-    # export
-    export = export_training()
+    export = export_training(mode="normal")
     if "error" in export:
         return export
     if export["pairs"] < 10:
@@ -414,7 +452,6 @@ def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_
     if not training_data:
         return {"error": "no training data produced"}
 
-    # upload via multipart form
     boundary = secrets.token_hex(16)
     body = (
         f"--{boundary}\r\n"
@@ -445,7 +482,6 @@ def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_
     if not file_id:
         return {"error": "upload succeeded but no file ID returned"}
 
-    # start fine-tune
     agent = AGENT_NAME or "agent"
     ft_model = model or os.environ.get("TOGETHER_MODEL", "Qwen/Qwen2-7B-Instruct")
     ft_suffix = suffix or os.environ.get("TOGETHER_SUFFIX", f"{agent}-v1")
@@ -479,6 +515,21 @@ def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_
 
     _save_job_id(job_id)
 
+    # register as pending in model registry
+    registry = _load_registry()
+    registry["models"].append({
+        "job_id": job_id,
+        "base_model": ft_model,
+        "output_model": None,
+        "suffix": ft_suffix,
+        "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "pair_count": export["pairs"],
+        "status": "pending",
+        "eval_scores": None,
+        "active": False,
+    })
+    _save_registry(registry)
+
     return {
         "job_id": job_id,
         "model": ft_model,
@@ -503,14 +554,141 @@ def check_training(job_id=None):
         return {"error": f"status check failed: {exc}"}
 
     result = {"job_id": jid, "status": data.get("status", "unknown")}
-    if data.get("status") == "completed":
-        result["model_id"] = data.get("model_output_name", "")
-        result["instruction"] = (
-            f"Set in .env: LLM_MODEL={result['model_id']}"
-        )
-    if data.get("status") in ("failed", "cancelled", "error"):
-        result["error"] = data.get("error", "unknown")
+
+    # update model registry
+    registry = _load_registry()
+    for m in registry["models"]:
+        if m["job_id"] != jid:
+            continue
+        if data.get("status") == "completed":
+            m["status"] = "completed"
+            m["output_model"] = data.get("model_output_name", "")
+            result["model_id"] = m["output_model"]
+            result["instruction"] = f"Run fabric_eval to test, then fabric_switch_model to activate."
+        elif data.get("status") in ("failed", "cancelled", "error"):
+            m["status"] = data["status"]
+            result["error"] = data.get("error", "unknown")
+        break
+    _save_registry(registry)
+
     return result
+
+
+def run_eval(candidate_model, base_model=None, sample_count=10):
+    """Run replacement-model eval. Returns comparison results."""
+    eval_script = PLUGIN_DIR.parent.parent / "scripts" / "eval-replacement.py"
+    if not eval_script.exists():
+        eval_script = PLUGIN_DIR / "eval-replacement.py"
+    if not eval_script.exists():
+        return {"error": "eval-replacement.py not found"}
+
+    key = _together_key()
+    if not key:
+        return {"error": "TOGETHER_API_KEY not set"}
+
+    base = base_model or os.environ.get("LLM_MODEL", "Qwen/Qwen2-7B-Instruct")
+
+    cmd = [
+        "python3", str(eval_script),
+        "--candidate-model", candidate_model,
+        "--base-model", base,
+        "--sample-count", str(sample_count),
+        "--together-api-key", key,
+        "--fabric-dir", str(FABRIC_DIR),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return {"error": "eval timed out (5 min limit)"}
+
+    if result.returncode != 0:
+        return {"error": result.stderr or "eval failed"}
+
+    try:
+        scores = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"error": "eval output not valid JSON", "raw": result.stdout[:500]}
+
+    # update registry with eval scores
+    registry = _load_registry()
+    for m in registry["models"]:
+        if m.get("output_model") == candidate_model:
+            m["eval_scores"] = scores.get("candidate_scores")
+            break
+    _save_registry(registry)
+
+    return scores
+
+
+def switch_model(model_id, min_eval_score=0.7):
+    """Switch the agent to use a replacement model."""
+    if not HERMES_HOME:
+        return {"error": "HERMES_HOME not set"}
+
+    env_file = HERMES_HOME / ".env"
+    if not env_file.exists():
+        return {"error": f".env not found at {env_file}"}
+
+    registry = _load_registry()
+    target = None
+    for m in registry["models"]:
+        if m.get("output_model") == model_id:
+            target = m
+            break
+    if not target:
+        return {"error": f"model {model_id} not in registry"}
+
+    if target.get("eval_scores") is None:
+        return {"error": "no eval scores — run fabric_eval first"}
+
+    scores = target["eval_scores"]
+    if isinstance(scores, dict):
+        avg = sum(scores.values()) / max(len(scores), 1)
+    elif isinstance(scores, (int, float)):
+        avg = scores
+    else:
+        return {"error": f"unexpected eval_scores format: {type(scores)}"}
+
+    if avg < min_eval_score:
+        return {
+            "error": f"eval score {avg:.2f} below threshold {min_eval_score}",
+            "scores": scores,
+        }
+
+    # backup .env
+    backup = HERMES_HOME / ".env.backup"
+    shutil.copy2(env_file, backup)
+
+    # read current, update model lines
+    lines = env_file.read_text("utf-8").split("\n")
+    filtered = [l for l in lines if not l.startswith(("LLM_MODEL=", "OPENAI_BASE_URL=", "OPENAI_API_KEY="))]
+    key = _together_key()
+    filtered.append(f"LLM_MODEL={model_id}")
+    filtered.append("OPENAI_BASE_URL=https://api.together.xyz/v1")
+    filtered.append(f"OPENAI_API_KEY={key}")
+
+    # atomic write
+    tmp = env_file.with_suffix(".tmp")
+    tmp.write_text("\n".join(filtered), "utf-8")
+    tmp.rename(env_file)
+
+    # update registry
+    old_model = None
+    for m in registry["models"]:
+        if m.get("active"):
+            old_model = m.get("output_model")
+            m["active"] = False
+    target["active"] = True
+    registry["active_model"] = model_id
+    _save_registry(registry)
+
+    return {
+        "status": "switched",
+        "old_model": old_model,
+        "new_model": model_id,
+        "eval_score": avg,
+        "backup": str(backup),
+    }
 
 
 # ── SOUL ─────────────────────────────────────────────────
