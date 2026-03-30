@@ -8,7 +8,7 @@ builder->reviewer, researcher->implementer, triage->resolver.
 
 Memory tools:
   fabric_recall        — ranked retrieval from shared fabric
-  fabric_write         — write entry with full schema v1 (status, review_of, revises, customer_id)
+  fabric_write         — write entry with full schema v1 (status, review_of, revises, customer_id, assigned_to)
   fabric_search        — keyword grep across fabric
 
 Workflow tools:

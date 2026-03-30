@@ -47,7 +47,7 @@ Restart Hermes. Run `/plugins` to verify:
 
 ```
 Plugins (1):
-  ✓ icarus v0.2.0 (6 tools, 4 hooks)
+  ✓ icarus v0.2.0 (7 tools, 4 hooks)
 ```
 
 **What your agent gets:**
@@ -55,8 +55,9 @@ Plugins (1):
 | Tool | What it does |
 |------|-------------|
 | `fabric_recall` | Ranked retrieval from shared memory (keyword, project, agent, recency scoring) |
-| `fabric_write` | Write entries any agent on any platform can read |
+| `fabric_write` | Write entries any agent on any platform can read, including explicit handoffs via `assigned_to` |
 | `fabric_search` | Keyword grep across all fabric entries |
+| `fabric_pending` | Show open handoffs assigned to this agent plus reviews of its work |
 | `fabric_export` | Export fabric entries as fine-tuning pairs (OpenAI, Together, HuggingFace formats) |
 | `fabric_train` | Upload + start a Together AI fine-tune from your fabric data |
 | `fabric_train_status` | Check job progress, get the output model ID when done |

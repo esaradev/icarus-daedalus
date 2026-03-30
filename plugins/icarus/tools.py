@@ -30,20 +30,24 @@ def fabric_write(args: dict, **kwargs) -> str:
     entry_type = args.get("type", "").strip()
     content = args.get("content", "").strip()
     summary = args.get("summary", "").strip()
+    status = args.get("status", "").strip()
+    assigned_to = args.get("assigned_to", "").strip()
     if not entry_type or not content or not summary:
         return _json({"error": "Need type, content, and summary"})
+    if status == "open" and not assigned_to:
+        return _json({"error": "Open handoffs require assigned_to"})
     try:
         path = state.write_entry(
             entry_type=entry_type,
             content=content,
             summary=summary,
             tags=args.get("tags", ""),
-            status=args.get("status", ""),
+            status=status,
             outcome=args.get("outcome", ""),
             review_of=args.get("review_of", ""),
             revises=args.get("revises", ""),
             customer_id=args.get("customer_id", ""),
-            assigned_to=args.get("assigned_to", ""),
+            assigned_to=assigned_to,
         )
         return _json({"status": "written", "path": path})
     except Exception as e:
