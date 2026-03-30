@@ -34,6 +34,9 @@ CUSTOMER_WORDS = {"customer", "billing", "support", "ticket", "refund", "account
                   "subscription", "payment", "invoice", "complaint", "resolution",
                   "escalation", "onboarding", "churn", "retention"}
 
+HANDOFF_WORDS = {"handoff", "review", "reviewer", "pickup", "pending", "relay",
+                 "assigned", "assignee", "revise", "revision", "feedback"}
+
 
 def parse_entry(filepath):
     text = filepath.read_text(encoding="utf-8")
@@ -78,6 +81,12 @@ def tokenize(text):
     return words - STOP_WORDS
 
 
+def _ngrams(tokens, n):
+    if len(tokens) < n:
+        return set()
+    return {tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1)}
+
+
 def age_hours(timestamp_str):
     if not timestamp_str:
         return 9999
@@ -89,9 +98,25 @@ def age_hours(timestamp_str):
         return 9999
 
 
+def _as_list(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
 def score_entry(entry, query_tokens, agent=None, project=None, relevant_refs=None):
-    body = (entry.get("_body", "") + " " + str(entry.get("summary", ""))).lower()
+    summary = str(entry.get("summary", ""))
+    summary_lower = summary.lower()
+    body = (entry.get("_body", "") + " " + summary).lower()
     entry_tokens = tokenize(body)
+    summary_tokens = tokenize(summary_lower)
+    entry_type = entry.get("type", "")
+    query_text = " ".join(re.findall(r"[a-z0-9]+", " ".join(sorted(query_tokens))))
+    body_text = " ".join(re.findall(r"[a-z0-9]+", body))
+    query_seq = re.findall(r"[a-z0-9]+", query_text)
+    body_seq = re.findall(r"[a-z0-9]+", body)
 
     score = 0.0
 
@@ -99,10 +124,24 @@ def score_entry(entry, query_tokens, agent=None, project=None, relevant_refs=Non
     keyword_hits = len(query_tokens & entry_tokens)
     score += keyword_hits * 5  # keywords are the primary signal
 
+    # 1a. Summary match is higher-signal than body text alone.
+    summary_hits = len(query_tokens & summary_tokens)
+    score += summary_hits * 3
+
+    # 1b. Exact phrase and n-gram matches beat loose token overlap.
+    raw_query = " ".join(re.findall(r"[a-z0-9]+", entry.get("_query", "")))
+    if raw_query and raw_query in body_text:
+        score += 18
+    if query_seq:
+        body_bigrams = _ngrams(body_seq, 2)
+        query_bigrams = _ngrams(query_seq, 2)
+        score += len(query_bigrams & body_bigrams) * 4
+        body_trigrams = _ngrams(body_seq, 3)
+        query_trigrams = _ngrams(query_seq, 3)
+        score += len(query_trigrams & body_trigrams) * 7
+
     # 1b. Tag match (tags are high-signal metadata)
-    entry_tags = entry.get("tags", [])
-    if isinstance(entry_tags, str):
-        entry_tags = [entry_tags]
+    entry_tags = _as_list(entry.get("tags", []))
     tag_tokens = set()
     for t in entry_tags:
         tag_tokens.update(re.findall(r'[a-z0-9]+', str(t).lower()))
@@ -143,19 +182,39 @@ def score_entry(entry, query_tokens, agent=None, project=None, relevant_refs=Non
         score += 1
 
     # 6. Type match
-    entry_type = entry.get("type", "")
     if query_tokens & CODE_WORDS:
         if entry_type in ("code-session", "review", "decision"):
             score += 5
     if query_tokens & CUSTOMER_WORDS:
         if entry_type in ("resolution", "task", "decision"):
             score += 5
+    if query_tokens & HANDOFF_WORDS:
+        if entry_type in ("task", "review", "resolution", "code-session"):
+            score += 6
+        elif entry_type == "session":
+            score -= 3
+
+    # Prefer source work artifacts over generic summaries.
+    if entry_type in ("task", "review", "resolution", "code-session", "research"):
+        score += 2
+    elif entry_type == "decision":
+        score += 1
+    elif entry_type == "session":
+        score -= 2
+
+    # Structured workflow fields are high-signal for handoffs and follow-ups.
+    if entry.get("status") == "open":
+        score += 4
+    if entry.get("review_of"):
+        score += 4
+    if entry.get("revises"):
+        score += 4
+    if entry.get("assigned_to"):
+        score += 2
 
     # 7. Ref chain
     if relevant_refs:
-        entry_refs = entry.get("refs", [])
-        if isinstance(entry_refs, str):
-            entry_refs = [entry_refs]
+        entry_refs = _as_list(entry.get("refs", []))
         entry_id = entry.get("id", "")
         entry_agent = entry.get("agent", "")
         entry_cycle = str(entry.get("cycle", ""))
@@ -168,6 +227,10 @@ def score_entry(entry, query_tokens, agent=None, project=None, relevant_refs=Non
                 ref_agent, ref_id = ref_str.split(":", 1)
                 if ref_agent == entry_agent and (ref_id == entry_id or ref_id == entry_cycle):
                     score += 3
+        linked_refs = [entry.get("review_of"), entry.get("revises")]
+        for ref in linked_refs:
+            if ref and ref in relevant_refs:
+                score += 5
 
     return score
 
@@ -208,6 +271,10 @@ def retrieve(query, max_results=5, max_tokens=2000, agent=None, project=None):
         return []
 
     query_tokens = tokenize(query)
+    query_words = re.findall(r"[a-z0-9]+", query.lower())
+    normalized_query = " ".join(query_words)
+    for e in entries:
+        e["_query"] = normalized_query
 
     # First pass: score without ref chain
     scored = [(score_entry(e, query_tokens, agent, project), e) for e in entries]
