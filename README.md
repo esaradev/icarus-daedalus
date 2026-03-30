@@ -54,15 +54,17 @@ Plugins (1):
 
 | Tool | What it does |
 |------|-------------|
-| `fabric_recall` | Ranked retrieval from shared memory (keyword, project, agent, recency scoring) |
-| `fabric_write` | Write entries any agent on any platform can read, including explicit handoffs via `assigned_to` |
-| `fabric_search` | Keyword grep across all fabric entries |
-| `fabric_pending` | Show open handoffs assigned to this agent plus reviews of its work |
-| `fabric_export` | Export fabric entries as fine-tuning pairs (OpenAI, Together, HuggingFace formats) |
-| `fabric_train` | Upload + start a Together AI fine-tune from your fabric data |
-| `fabric_train_status` | Check job progress, get the output model ID when done |
+| `fabric_pending` | Show work assigned to this agent, plus reviews of its work and open customer tickets. Use this first at session start. |
+| `fabric_recall` | Retrieve relevant prior work from shared memory across agents and sessions before starting a task. |
+| `fabric_write` | Write structured entries for handoffs, reviews, revisions, decisions, fixes, and completed work. This is the core collaboration tool. |
+| `fabric_search` | Exact-term lookup across memory for function names, IDs, error strings, or specific keywords. |
+| `fabric_export` | Export and inspect training data built from shared work history. |
+| `fabric_train` | Start a fine-tune from collected shared work history. |
+| `fabric_train_status` | Check training progress and retrieve the resulting model info. |
 
 Plus 4 automatic hooks: context injection on session start, relevant memory retrieval on topic change, decision capture after every response, session summary on end.
+
+These tools let Hermes agents share memory, hand off work, link reviews and fixes, and turn that history into training data.
 
 For self-training, set `TOGETHER_API_KEY` in your agent's `.env`. The agent can then call `fabric_export` to check pair count and `fabric_train` to fine-tune itself.
 
@@ -137,13 +139,13 @@ Cross-platform memory, handoff workflows, and self-training via hermes plugin ho
 
 | Tool | Purpose |
 |------|---------|
-| `fabric_recall` | Ranked retrieval from shared memory |
-| `fabric_write` | Write entries with linking fields (`review_of`, `revises`, `assigned_to`) |
-| `fabric_search` | Keyword grep |
-| `fabric_pending` | Show work assigned to this agent |
-| `fabric_export` | Export training pairs |
-| `fabric_train` | Start Together AI fine-tune |
-| `fabric_train_status` | Check job progress |
+| `fabric_pending` | Show work assigned to this agent, reviews of its work, and open tickets |
+| `fabric_recall` | Retrieve relevant prior work across agents and sessions |
+| `fabric_write` | Write handoffs, reviews, revisions, fixes, and completed work with link fields |
+| `fabric_search` | Exact-term lookup across shared memory |
+| `fabric_export` | Export training pairs from shared work history |
+| `fabric_train` | Start Together AI fine-tune from collected history |
+| `fabric_train_status` | Check job progress and resulting model info |
 
 **4 hooks:** context injection at session start (including pending handoffs), memory retrieval on topic change, decision capture with status detection, session summary on end.
 

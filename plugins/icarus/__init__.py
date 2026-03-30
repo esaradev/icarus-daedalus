@@ -7,17 +7,17 @@ for any Hermes agent. Optimized for multi-agent patterns:
 builder->reviewer, researcher->implementer, triage->resolver.
 
 Memory tools:
-  fabric_recall        — ranked retrieval from shared fabric
-  fabric_write         — write entry with full schema v1 (status, review_of, revises, customer_id, assigned_to)
-  fabric_search        — keyword grep across fabric
+  fabric_recall        — retrieve relevant prior work from shared fabric
+  fabric_write         — write handoffs, reviews, revisions, fixes, and completed work
+  fabric_search        — exact-term lookup across fabric
 
 Workflow tools:
-  fabric_pending       — what needs my attention (open tasks, reviews of my work, tickets)
+  fabric_pending       — what needs my attention first (assigned work, reviews, tickets)
 
 Training tools:
-  fabric_export        — export fabric entries as fine-tuning pairs
+  fabric_export        — export training data from shared work history
   fabric_train         — upload + start Together AI fine-tune
-  fabric_train_status  — check job status, get output model ID
+  fabric_train_status  — check job status and get output model info
 
 Hooks (automatic):
   on_session_start  — loads SOUL, pending handoffs, reviews of your work, recent context
