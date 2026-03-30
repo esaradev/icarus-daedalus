@@ -205,12 +205,25 @@ def score_entry(entry, query_tokens, agent=None, project=None, relevant_refs=Non
     # Structured workflow fields are high-signal for handoffs and follow-ups.
     if entry.get("status") == "open":
         score += 4
-    if entry.get("review_of"):
-        score += 4
-    if entry.get("revises"):
-        score += 4
     if entry.get("assigned_to"):
         score += 2
+
+    # Reviews reference the original work's keywords, which inflates their
+    # keyword score. When the query isn't asking for reviews/feedback, penalize
+    # type=review so the source entry ranks higher.
+    REVIEW_QUERY_WORDS = {"review", "reviewed", "feedback", "issue", "fix", "must", "should", "approve", "reject", "lgtm"}
+    if entry_type == "review":
+        if query_tokens & REVIEW_QUERY_WORDS:
+            # query IS about reviews — boost linking fields
+            if entry.get("review_of"):
+                score += 5
+        else:
+            # query is about the work itself — reviews are secondary
+            score -= 4
+    elif entry.get("review_of"):
+        score += 3
+    if entry.get("revises"):
+        score += 4
 
     # 7. Ref chain
     if relevant_refs:
