@@ -36,17 +36,22 @@ FABRIC_WRITE = {
     "name": "fabric_write",
     "description": (
         "Write a new entry to shared fabric memory. All agents on all platforms "
-        "can read it. Use for decisions, completed work, findings, reviews, "
-        "or anything worth remembering. Set status to 'open' when handing work "
-        "to another agent. Use review_of to link a review to the original work. "
-        "Use revises to link a fix to the entry it fixes."
+        "can read it. IMPORTANT linking rules:\n"
+        "- When you review another agent's work, ALWAYS set type='review' and "
+        "review_of='agent:id' using the exact ID from session context or fabric_pending.\n"
+        "- When you fix or revise work after receiving feedback, ALWAYS set "
+        "revises='agent:id' pointing to the entry you are fixing.\n"
+        "- When handing work to another agent, set status='open' and assigned_to "
+        "with the target agent's name.\n"
+        "These links are how other agents trace the chain of work and how "
+        "training data extraction builds review-correction pairs."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "type": {
                 "type": "string",
-                "description": "Entry type: task, decision, review, resolution, research, code-session, session, note",
+                "description": "Entry type: task, decision, review, resolution, research, code-session, session, note. Use 'review' when responding to another agent's work.",
             },
             "content": {
                 "type": "string",
@@ -62,7 +67,7 @@ FABRIC_WRITE = {
             },
             "status": {
                 "type": "string",
-                "description": "Lifecycle state: open (needs attention), completed, blocked, superseded. Use 'open' to hand work to the next agent.",
+                "description": "open = needs another agent's attention (requires assigned_to). completed = done. blocked = stuck. superseded = replaced by newer entry.",
             },
             "outcome": {
                 "type": "string",
@@ -70,19 +75,19 @@ FABRIC_WRITE = {
             },
             "review_of": {
                 "type": "string",
-                "description": "Entry being reviewed, format: agent:id (e.g. icarus:a3f29b01). Links your review to the original work.",
+                "description": "REQUIRED when type='review'. The entry you are reviewing, as agent:id (e.g. icarus:a3f29b01). Get the id from session-start context or fabric_pending results.",
             },
             "revises": {
                 "type": "string",
-                "description": "Entry being fixed/revised, format: agent:id. Creates a revision chain.",
+                "description": "REQUIRED when fixing work after a review. The entry you are revising, as agent:id. Creates an explicit before/after chain for training.",
             },
             "customer_id": {
                 "type": "string",
-                "description": "Customer/account scope. For support: prevents cross-contamination in retrieval.",
+                "description": "Customer/account scope. Carry forward from the original entry when resolving a ticket.",
             },
             "assigned_to": {
                 "type": "string",
-                "description": "Target Hermes agent name for a handoff. Required for status:'open' entries you expect another agent to pick up via fabric_pending.",
+                "description": "REQUIRED when status='open'. The agent name who should pick this up. Without this, the entry won't appear in their fabric_pending.",
             },
         },
         "required": ["type", "content", "summary"],
@@ -92,11 +97,13 @@ FABRIC_WRITE = {
 FABRIC_PENDING = {
     "name": "fabric_pending",
     "description": (
-        "Show work waiting for your attention. Finds: (1) open entries from other "
-        "agents explicitly assigned to you — tasks to implement, code to review, tickets to "
-        "resolve. (2) Reviews of YOUR work from other agents — feedback to act on. "
-        "(3) Open customer tickets assigned to you if you're in a support workflow. "
-        "Returns full entry metadata including id so you can use exact review_of/revises links."
+        "Show work waiting for your attention. Returns entry IDs you need for linking.\n"
+        "- open_tasks: entries from other agents assigned to you. When you finish "
+        "reviewing one, use fabric_write with type='review' and review_of='agent:id'.\n"
+        "- reviews_of_my_work: feedback on your entries. When you fix the issue, "
+        "use fabric_write with revises='agent:id' pointing to your original entry.\n"
+        "- open_tickets: customer-scoped entries assigned to you. Carry the customer_id forward.\n"
+        "Call this at session start to decide what to work on."
     ),
     "parameters": {
         "type": "object",
