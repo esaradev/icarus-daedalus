@@ -292,6 +292,7 @@ def _load_retriever():
         Path(os.environ.get("FABRIC_RETRIEVE_PATH", "")),
     ]
     if HERMES_HOME:
+        paths.append(HERMES_HOME / "plugins" / "icarus" / "fabric-retrieve.py")
         paths.append(HERMES_HOME / "plugins" / "fabric-memory" / "fabric-retrieve.py")
     for p in paths:
         if p and p.exists():

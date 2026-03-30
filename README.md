@@ -66,6 +66,14 @@ Plus 4 automatic hooks: context injection on session start, relevant memory retr
 
 For self-training, set `TOGETHER_API_KEY` in your agent's `.env`. The agent can then call `fabric_export` to check pair count and `fabric_train` to fine-tune itself.
 
+To prove the handoff chain works locally without a live model call:
+
+```bash
+bash scripts/smoke-handoff.sh
+```
+
+That script creates temp Hermes-style homes plus a temp `fabric/`, writes a builder handoff, verifies pending pickup, writes a linked review, writes a linked fix, and checks recall for the chain.
+
 ## Claude Code only
 
 ```bash
