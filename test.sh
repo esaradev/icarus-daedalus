@@ -332,8 +332,25 @@ st_out=$(TOGETHER_API_KEY="" HOME="$T/nohome" bash "$SCRIPT_DIR/scripts/self-tra
 echo "$st_out" | grep -q "TOGETHER_API_KEY not set" && pass "self-train exits when no API key" || fail "self-train missing key message"
 
 # Test: exits with warning when < 20 pairs
-st_out=$(TOGETHER_API_KEY="fake-key-for-test" bash "$SCRIPT_DIR/scripts/self-train.sh" 2>&1 || true)
+LOW_PAIR_DIR=$(mktemp -d)
+cat > "$LOW_PAIR_DIR/entry-1.md" << 'EOF'
+---
+id: test0001
+agent: tiny
+platform: cli
+timestamp: 2026-03-30T00:00:00Z
+type: task
+tier: hot
+summary: tiny fabric entry
+project_id: low-pair-test
+session_id: sess-low-pair
+---
+
+This is a deliberately tiny fabric corpus for self-train warning coverage.
+EOF
+st_out=$(FABRIC_DIR="$LOW_PAIR_DIR" TOGETHER_API_KEY="fake-key-for-test" bash "$SCRIPT_DIR/scripts/self-train.sh" 2>&1 || true)
 echo "$st_out" | grep -q "warning\|minimum" && pass "self-train warns on low pairs" || fail "self-train low pair warning"
+rm -rf "$LOW_PAIR_DIR"
 
 # Test: creates lock dir and cleans it up
 rm -rf /tmp/icarus-self-train.lock
@@ -564,10 +581,10 @@ grep -q "python3 -c" "$SCRIPT_DIR/scripts/self-train.sh" && grep -q "json.dumps"
 grep -q "fabric-retrieve.py" "$SCRIPT_DIR/setup.sh" && pass "setup copies retrieval helper" || fail "setup missing retrieval copy"
 
 # Test: plugin resets query state on session start
-grep -q "_last_query_tokens = set()" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin resets query state on session start" || fail "plugin never resets query state"
+grep -q "_last_query_tokens = set()" "$SCRIPT_DIR/plugins/icarus/hooks.py" && pass "plugin resets query state on session start" || fail "plugin never resets query state"
 
 # Test: plugin fires retrieval on topic change (not just first turn)
-grep -q "overlap.*0.6" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin detects topic changes" || fail "plugin only fires on first turn"
+grep -q "overlap.*0.6" "$SCRIPT_DIR/plugins/icarus/hooks.py" && pass "plugin detects topic changes" || fail "plugin only fires on first turn"
 
 # Test: dialogue.sh uses previous agent output as retrieval query
 grep -q "CYCLE_CONTEXT.*tail\|previous agent" "$SCRIPT_DIR/examples/hermes-demo/dialogue.sh" && pass "dialogue uses previous agent output as query" || fail "dialogue uses static query"
@@ -576,11 +593,17 @@ grep -q "CYCLE_CONTEXT.*tail\|previous agent" "$SCRIPT_DIR/examples/hermes-demo/
 grep -q "RECENT_SUMMARY" "$SCRIPT_DIR/hooks/on-start.sh" && pass "hook includes recent summary in query" || fail "hook only uses project name"
 
 # Test: plugin uses shared retriever (no inline scoring)
-grep -q "_load_retriever\|_get_retriever" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "plugin uses shared retriever" || fail "plugin has inline retrieval"
-! grep -q "_score_entry" "$SCRIPT_DIR/plugins/fabric-memory/__init__.py" && pass "no duplicate scoring in plugin" || fail "plugin still has inline _score_entry"
+grep -q "_load_retriever" "$SCRIPT_DIR/plugins/icarus/state.py" && pass "plugin uses shared retriever" || fail "plugin has inline retrieval"
+! grep -q "_score_entry" "$SCRIPT_DIR/plugins/icarus/"*.py && pass "no duplicate scoring in plugin" || fail "plugin still has inline _score_entry"
 
 # Test: plugin.yaml declares pre_llm_call
-grep -q "pre_llm_call" "$SCRIPT_DIR/plugins/fabric-memory/plugin.yaml" && pass "plugin.yaml declares pre_llm_call" || fail "plugin.yaml missing pre_llm_call"
+grep -q "pre_llm_call" "$SCRIPT_DIR/plugins/icarus/plugin.yaml" && pass "plugin.yaml declares pre_llm_call" || fail "plugin.yaml missing pre_llm_call"
+
+# Test: installed-home retriever path includes plugins/icarus helper
+grep -q 'plugins" / "icarus" / "fabric-retrieve.py"' "$SCRIPT_DIR/plugins/icarus/state.py" && pass "retriever checks installed icarus path" || fail "retriever missing installed icarus path"
+
+# Test: smoke handoff proof command exists and runs
+bash "$SCRIPT_DIR/scripts/smoke-handoff.sh" > /dev/null 2>&1 && pass "smoke handoff proof command" || fail "smoke handoff proof command"
 
 # Test: add-agent.sh provisions hermes plugins and identity correctly
 grep -q 'REPO_DIR="$(cd "\$SCRIPT_DIR/../.." && pwd)"' "$SCRIPT_DIR/examples/hermes-demo/add-agent.sh" && pass "add-agent resolves repo root" || fail "add-agent missing repo root resolution"

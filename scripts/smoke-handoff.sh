@@ -51,7 +51,6 @@ def parse_id(path: str) -> str:
 def run_as(agent_name: str, home: str):
     os.environ["HERMES_AGENT_NAME"] = agent_name
     os.environ["HERMES_HOME"] = home
-    os.environ["FABRIC_DIR"] = os.environ["FABRIC_DIR"]
     state.AGENT_NAME = agent_name
     state.HERMES_HOME = Path(home)
     state.FABRIC_DIR = Path(os.environ["FABRIC_DIR"])
@@ -142,5 +141,5 @@ print("")
 print("Smoke handoff OK")
 print(f"  fabric:   {os.environ['FABRIC_DIR']}")
 print(f"  task id:  {task_id}")
-print(f"  review:   {review_ref}")
+print(f"  review_of:{review_ref}")
 PY
