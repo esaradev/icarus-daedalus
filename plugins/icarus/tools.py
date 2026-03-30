@@ -44,10 +44,14 @@ def fabric_write(args: dict, **kwargs) -> str:
         parts = review_of.split(":", 1)
         if len(parts) != 2 or not parts[0] or not parts[1] or len(parts[1]) < 4:
             return _json({"error": f"review_of must be agent:id (e.g. icarus:a3f29b01), got '{review_of}'"})
+        if not state.has_entry_ref(review_of):
+            return _json({"error": f"review_of points to a missing entry: '{review_of}'"})
     if revises:
         parts = revises.split(":", 1)
         if len(parts) != 2 or not parts[0] or not parts[1] or len(parts[1]) < 4:
             return _json({"error": f"revises must be agent:id (e.g. icarus:a3f29b01), got '{revises}'"})
+        if not state.has_entry_ref(revises):
+            return _json({"error": f"revises points to a missing entry: '{revises}'"})
     try:
         path = state.write_entry(
             entry_type=entry_type,

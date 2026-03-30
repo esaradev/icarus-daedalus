@@ -181,6 +181,26 @@ def _parse_head(filepath, max_bytes=800):
     return fields
 
 
+def has_entry_ref(ref):
+    """Return True when agent:id resolves to a real fabric entry."""
+    if not ref or ":" not in ref or not FABRIC_DIR.exists():
+        return False
+    agent, entry_id = ref.split(":", 1)
+    agent = agent.strip()
+    entry_id = entry_id.strip()
+    if not agent or not entry_id:
+        return False
+
+    for d in (FABRIC_DIR, FABRIC_DIR / "cold"):
+        if not d.exists():
+            continue
+        for f in d.glob("*.md"):
+            h = _parse_head(f)
+            if h.get("agent", "").strip() == agent and h.get("id", "").strip() == entry_id:
+                return True
+    return False
+
+
 def read_pending(customer_id=None):
     """Find entries needing this agent's attention.
 
