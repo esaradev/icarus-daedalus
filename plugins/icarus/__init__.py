@@ -62,6 +62,8 @@ def register(ctx):
                       schema=schemas.FABRIC_EVAL, handler=tools.fabric_eval)
     ctx.register_tool(name="fabric_switch_model", toolset="fabric",
                       schema=schemas.FABRIC_SWITCH_MODEL, handler=tools.fabric_switch_model)
+    ctx.register_tool(name="fabric_rollback_model", toolset="fabric",
+                      schema=schemas.FABRIC_ROLLBACK_MODEL, handler=tools.fabric_rollback_model)
 
     # hooks
     ctx.register_hook("on_session_start", hooks.on_session_start)
@@ -69,4 +71,4 @@ def register(ctx):
     ctx.register_hook("post_llm_call", hooks.post_llm_call)
     ctx.register_hook("on_session_end", hooks.on_session_end)
 
-    logger.info("icarus v3 registered (11 tools, 4 hooks)")
+    logger.info("icarus v3 registered (12 tools, 4 hooks)")

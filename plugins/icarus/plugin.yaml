@@ -1,7 +1,7 @@
 name: icarus
 version: 0.3.0
 description: Self-memory and replacement models for Hermes agents. Remember your work. Train your replacement.
-author: icarus-daedalus
+author: esaradev
 provides_tools:
   - fabric_recall
   - fabric_write
@@ -14,6 +14,7 @@ provides_tools:
   - fabric_models
   - fabric_eval
   - fabric_switch_model
+  - fabric_rollback_model
 provides_hooks:
   - on_session_start
   - pre_llm_call

@@ -336,7 +336,6 @@ def _load_retriever():
     ]
     if HERMES_HOME:
         paths.append(HERMES_HOME / "plugins" / "icarus" / "fabric-retrieve.py")
-        paths.append(HERMES_HOME / "plugins" / "fabric-memory" / "fabric-retrieve.py")
     for p in paths:
         if p and p.exists():
             try:
@@ -399,9 +398,6 @@ def _together_request(method, url, data=None):
 def export_training(mode="normal"):
     """Export fabric entries as training pairs. Returns stats dict."""
     export_script = PLUGIN_DIR / "export-training.py"
-    if not export_script.exists():
-        repo_root = PLUGIN_DIR.parent.parent
-        export_script = repo_root / "export-training.py"
     if not export_script.exists():
         return {"error": "export-training.py not found"}
 
@@ -576,9 +572,7 @@ def check_training(job_id=None):
 
 def run_eval(candidate_model, base_model=None, sample_count=10):
     """Run replacement-model eval. Returns comparison results."""
-    eval_script = PLUGIN_DIR.parent.parent / "scripts" / "eval-replacement.py"
-    if not eval_script.exists():
-        eval_script = PLUGIN_DIR / "eval-replacement.py"
+    eval_script = PLUGIN_DIR / "scripts" / "eval-replacement.py"
     if not eval_script.exists():
         return {"error": "eval-replacement.py not found"}
 
@@ -655,17 +649,28 @@ def switch_model(model_id, min_eval_score=0.7):
             "scores": scores,
         }
 
+    # find current model for rollback
+    lines = env_file.read_text("utf-8").split("\n")
+    old_model = None
+    for l in lines:
+        if l.startswith("LLM_MODEL="):
+            old_model = l.split("=", 1)[1].strip()
+
     # backup .env
     backup = HERMES_HOME / ".env.backup"
     shutil.copy2(env_file, backup)
 
-    # read current, update model lines
-    lines = env_file.read_text("utf-8").split("\n")
-    filtered = [l for l in lines if not l.startswith(("LLM_MODEL=", "OPENAI_BASE_URL=", "OPENAI_API_KEY="))]
-    key = _together_key()
+    # only update LLM_MODEL -- don't clobber existing provider config
+    filtered = [l for l in lines if not l.startswith("LLM_MODEL=")]
     filtered.append(f"LLM_MODEL={model_id}")
-    filtered.append("OPENAI_BASE_URL=https://api.together.xyz/v1")
-    filtered.append(f"OPENAI_API_KEY={key}")
+
+    # only add Together provider config if no OPENAI_BASE_URL exists
+    has_base_url = any(l.startswith("OPENAI_BASE_URL=") for l in lines)
+    if not has_base_url:
+        key = _together_key()
+        if key:
+            filtered.append("OPENAI_BASE_URL=https://api.together.xyz/v1")
+            filtered.append(f"OPENAI_API_KEY={key}")
 
     # atomic write
     tmp = env_file.with_suffix(".tmp")
@@ -673,21 +678,62 @@ def switch_model(model_id, min_eval_score=0.7):
     tmp.rename(env_file)
 
     # update registry
-    old_model = None
     for m in registry["models"]:
         if m.get("active"):
-            old_model = m.get("output_model")
             m["active"] = False
     target["active"] = True
     registry["active_model"] = model_id
     _save_registry(registry)
 
+    rollback = f"fabric_switch_model(model_id='{old_model}')" if old_model else "restore from .env.backup"
     return {
         "status": "switched",
         "old_model": old_model,
         "new_model": model_id,
         "eval_score": avg,
         "backup": str(backup),
+        "rollback": rollback,
+    }
+
+
+def rollback_model():
+    """Restore .env from backup and deactivate current model in registry."""
+    if not HERMES_HOME:
+        return {"error": "HERMES_HOME not set"}
+
+    backup = HERMES_HOME / ".env.backup"
+    env_file = HERMES_HOME / ".env"
+
+    if not backup.exists():
+        return {"error": "no .env.backup found — nothing to roll back to"}
+
+    # read what we're rolling back from
+    current_model = None
+    if env_file.exists():
+        for l in env_file.read_text("utf-8").split("\n"):
+            if l.startswith("LLM_MODEL="):
+                current_model = l.split("=", 1)[1].strip()
+
+    shutil.copy2(backup, env_file)
+
+    # read what we rolled back to
+    restored_model = None
+    for l in env_file.read_text("utf-8").split("\n"):
+        if l.startswith("LLM_MODEL="):
+            restored_model = l.split("=", 1)[1].strip()
+
+    # update registry
+    registry = _load_registry()
+    for m in registry["models"]:
+        if m.get("active"):
+            m["active"] = False
+    registry["active_model"] = None
+    _save_registry(registry)
+
+    return {
+        "status": "rolled_back",
+        "from_model": current_model,
+        "to_model": restored_model,
     }
 
 

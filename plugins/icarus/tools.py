@@ -178,3 +178,11 @@ def fabric_switch_model(args: dict, **kwargs) -> str:
         return _json(result)
     except Exception as e:
         return _json({"error": str(e)})
+
+
+def fabric_rollback_model(args: dict, **kwargs) -> str:
+    try:
+        result = state.rollback_model()
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})

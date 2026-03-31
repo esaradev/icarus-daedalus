@@ -222,6 +222,37 @@ def extract_pairs(entries):
                 pairs.append(make_pair(user_msg, improved.get("body", ""), {"type": "review-correction", "reviewer": agent, "author": ref_agent}))
                 review_pairs += 1
 
+        # ── REVIEW PAIRS via review_of/revises (v3 plugin path) ──
+        if entry_type == "review" and e.get("review_of"):
+            ref = e["review_of"]
+            orig = _resolve_ref(ref, entries)
+            if orig:
+                ref_agent = ref.split(":")[0] if ":" in ref else ""
+                improved = None
+                for candidate in entries:
+                    if candidate.get("revises") == ref:
+                        improved = candidate
+                        break
+                if improved:
+                    rc_key = (e.get("file", ""), orig.get("file", ""))
+                    # avoid duplicate if refs-based path already found this pair
+                    rc_msg = f"[self-correct] Original work:\n{orig.get('body', '')[:300]}\n\nReview feedback:\n{body[:300]}\n\nProvide the improved version."
+                    if not any(p["input"] == rc_msg for p in pairs if p.get("metadata", {}).get("type") == "review-correction"):
+                        pairs.append(make_pair(rc_msg, improved.get("body", ""),
+                            {"type": "review-correction", "reviewer": agent, "author": ref_agent, "training_value": tv}))
+                        review_pairs += 1
+
+        # ── CROSS-PLATFORM via review_of ──
+        if e.get("review_of") and platform:
+            source = _resolve_ref(e["review_of"], entries)
+            if source:
+                src_plat = source.get("platform", "")
+                if src_plat and src_plat != platform:
+                    user_msg = f"[cross-platform context] Memory from {src_plat}:\n{source.get('body', '')[:300]}\n\nYou are on {platform}. Use this context in your response."
+                    pairs.append(make_pair(user_msg, body,
+                        {"type": "cross-platform", "source_platform": src_plat, "target_platform": platform, "agent": agent, "training_value": tv}))
+                    xplat_pairs += 1
+
         # ── CROSS-PLATFORM PAIRS: resolve ref to specific entry ──
         if refs and platform:
             for ref in refs:

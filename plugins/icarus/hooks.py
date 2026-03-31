@@ -180,13 +180,18 @@ def post_llm_call(session_id="", user_message="", assistant_response="", platfor
     agent = state.AGENT_NAME or "agent"
     plat = platform or "cli"
 
-    # capture decisions: requires decision keyword + outcome indicator + >200 chars
+    # capture decisions: requires decision + outcome in response, AND a substantial
+    # user request (>50 chars) to ground the claim. stores both task and result
+    # so training pairs have real context, not just assistant prose.
+    user_text = (user_message or "").strip()
     if (_DECISION_RE.search(assistant_response)
             and _OUTCOME_RE.search(assistant_response)
-            and len(assistant_response) > 200):
+            and len(assistant_response) > 200
+            and len(user_text) > 50):
+        body = f"Task: {user_text[:300]}\n\nResult: {assistant_response[:500]}"
         summary = assistant_response[:80].replace("\n", " ")
         entry_status = "completed" if _COMPLETION_RE.search(assistant_response) else ""
-        state.write_entry("decision", assistant_response[:500], summary,
+        state.write_entry("decision", body, summary,
                          platform=plat, status=entry_status, training_value="high")
 
     # creative tracking (uses broader _THEME_RE, doesn't write entries)

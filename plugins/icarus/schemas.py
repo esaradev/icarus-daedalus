@@ -311,3 +311,17 @@ FABRIC_SWITCH_MODEL = {
         "required": ["model_id"],
     },
 }
+
+FABRIC_ROLLBACK_MODEL = {
+    "name": "fabric_rollback_model",
+    "description": (
+        "Roll back to the previous model by restoring .env from backup. "
+        "Use when a replacement model is underperforming in production. "
+        "No eval gate needed -- this is an emergency escape hatch."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
