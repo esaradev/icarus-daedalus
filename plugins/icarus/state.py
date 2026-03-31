@@ -83,6 +83,26 @@ _TELEMETRY_FILE = (HERMES_HOME or Path.home()) / ".icarus-telemetry.jsonl"
 _recall_log: list = []
 
 
+def _summarize_telemetry_events(events):
+    """Compute telemetry summary for a filtered event list."""
+    recalls = [e for e in events if e.get("event") == "recall"]
+    usages = [e for e in events if e.get("event") == "usage"]
+    recalled_ids = set()
+    for r in recalls:
+        recalled_ids.update(r.get("result_ids", []))
+    used_ids = set(u.get("entry_id", "") for u in usages)
+    used_ids.discard("")
+    recalled_ids.discard("")
+    used_from_recall = used_ids & recalled_ids
+    return {
+        "total_recalls": len(recalls),
+        "total_usages": sum(1 for u in usages if u.get("entry_id", "") in recalled_ids),
+        "unique_entries_recalled": len(recalled_ids),
+        "unique_entries_used": len(used_from_recall),
+        "usage_rate": round(len(used_from_recall) / max(len(recalled_ids), 1), 2),
+    }
+
+
 def log_recall(query, results, source="pre_llm_call"):
     """Log what was recalled and injected."""
     entry = {
@@ -137,7 +157,7 @@ def log_usage(entry_id, action="referenced"):
         pass
 
 
-def get_telemetry(last_n=50):
+def get_telemetry(last_n=50, session_id_filter=None, agent_filter=None):
     """Read recent telemetry entries."""
     empty_summary = {
         "total_recalls": 0,
@@ -156,26 +176,14 @@ def get_telemetry(last_n=50):
         except Exception:
             pass
 
-    # compute summary
-    recalls = [e for e in events if e.get("event") == "recall"]
-    usages = [e for e in events if e.get("event") == "usage"]
-    recalled_ids = set()
-    for r in recalls:
-        recalled_ids.update(r.get("result_ids", []))
-    used_ids = set(u.get("entry_id", "") for u in usages)
-    used_ids.discard("")
-    recalled_ids.discard("")
-    used_from_recall = used_ids & recalled_ids
+    if session_id_filter:
+        events = [e for e in events if e.get("session_id") == session_id_filter]
+    if agent_filter:
+        events = [e for e in events if e.get("agent") == agent_filter]
 
     return {
         "events": events,
-        "summary": {
-            "total_recalls": len(recalls),
-            "total_usages": sum(1 for u in usages if u.get("entry_id", "") in recalled_ids),
-            "unique_entries_recalled": len(recalled_ids),
-            "unique_entries_used": len(used_from_recall),
-            "usage_rate": round(len(used_from_recall) / max(len(recalled_ids), 1), 2),
-        },
+        "summary": _summarize_telemetry_events(events),
     }
 
 
@@ -281,7 +289,12 @@ def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli
     ts_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     agent = AGENT_NAME or "agent"
     suffix = secrets.token_hex(2)
-    filename = f"{agent}-{entry_type}-{ts}-{suffix}.md"
+    # derive a short slug from the summary for human-readable filenames
+    slug = re.sub(r"[^a-z0-9]+", "-", summary.lower().strip())[:40].strip("-")
+    if slug:
+        filename = f"{agent}-{entry_type}-{slug}-{suffix}.md"
+    else:
+        filename = f"{agent}-{entry_type}-{ts}-{suffix}.md"
 
     sid = session_id or os.environ.get(
         "FABRIC_SESSION_ID", f"sess-{now.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}")
@@ -404,6 +417,7 @@ def _parse_head(filepath, max_bytes=800):
     fields = {}
     for key in ("agent", "type", "tier", "status", "summary", "timestamp",
                 "review_of", "revises", "customer_id", "assigned_to", "id",
+                "project_id", "session_id",
                 "outcome", "training_value", "verified", "evidence",
                 "source_tool", "artifact_paths"):
         m = re.search(rf"^{key}: (.+)$", text, re.MULTILINE)
@@ -962,6 +976,20 @@ def _count_session_entries():
     return count
 
 
+def _count_session_linked_entries():
+    """Count linked workflow entries written during the current session."""
+    if not session_id or not FABRIC_DIR.exists():
+        return 0
+    count = 0
+    for f in FABRIC_DIR.glob("*.md"):
+        head = _parse_head(f)
+        if head.get("session_id") != session_id:
+            continue
+        if head.get("review_of") or head.get("revises"):
+            count += 1
+    return count
+
+
 def list_session_entries():
     """List entries written during the current session."""
     if not session_id or not FABRIC_DIR.exists():
@@ -988,10 +1016,10 @@ def score_session():
     has_outcome = bool(OUTCOME_RE.search(all_text))
     scores["decision"] = 1.0 if (has_decision and has_outcome) else (0.5 if has_decision else 0.0)
 
-    tel = get_telemetry(last_n=100)
+    tel = get_telemetry(last_n=500, session_id_filter=session_id, agent_filter=AGENT_NAME)
     scores["recall_usage"] = tel.get("summary", {}).get("usage_rate", 0.0)
 
-    scores["linked_entries"] = min(_count_session_entries() / 3, 1.0)
+    scores["linked_entries"] = min(_count_session_linked_entries() / 2, 1.0)
 
     substantial_user = sum(1 for ex in exchanges if len(ex.get("user", "").strip()) > 50)
     scores["user_engagement"] = min(substantial_user / 3, 1.0)
@@ -1017,6 +1045,7 @@ def get_entry_usage_stats():
             eid = event.get("entry_id", "")
             if eid:
                 used_ids.add(eid)
+    used_ids &= recalled_ids
 
     type_recalled: dict = {}
     type_used: dict = {}
@@ -1053,6 +1082,7 @@ def build_weekly_report():
     by_type: dict = {}
     by_tv = {"high": 0, "normal": 0, "low": 0, "unset": 0}
     verified_count = 0
+    trainable_ids = set()
 
     for e in entries:
         t = e.get("type", "unknown")
@@ -1061,6 +1091,10 @@ def build_weekly_report():
         by_tv[tv if tv in by_tv else "unset"] += 1
         if str(e.get("verified", "")).lower() == "true":
             verified_count += 1
+        if tv == "high" or str(e.get("verified", "")).lower() == "true":
+            entry_id = e.get("id")
+            if entry_id:
+                trainable_ids.add(str(entry_id))
 
     usage_stats = get_entry_usage_stats()
     tel = get_telemetry(last_n=200)
@@ -1072,7 +1106,7 @@ def build_weekly_report():
         "verified_entries": verified_count,
         "recall_usage": tel.get("summary", {}),
         "usage_by_type": usage_stats.get("by_type", {}),
-        "trainable_estimate": by_tv.get("high", 0) + verified_count,
+        "trainable_estimate": len(trainable_ids),
     }
 
 
