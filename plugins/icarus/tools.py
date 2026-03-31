@@ -74,10 +74,12 @@ def fabric_write(args: dict, **kwargs) -> str:
         # log usage telemetry when referencing other entries
         if review_of:
             ref_id = review_of.split(":", 1)[1] if ":" in review_of else review_of
-            state.log_usage(ref_id, action="reviewed")
+            if state.was_recalled(ref_id):
+                state.log_usage(ref_id, action="reviewed")
         if revises:
             ref_id = revises.split(":", 1)[1] if ":" in revises else revises
-            state.log_usage(ref_id, action="revised")
+            if state.was_recalled(ref_id):
+                state.log_usage(ref_id, action="revised")
         return _json({"status": "written", "path": path})
     except Exception as e:
         return _json({"error": str(e)})

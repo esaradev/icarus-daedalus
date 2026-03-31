@@ -70,6 +70,7 @@ def on_session_start(session_id="", platform="", **kwargs):
     _last_query_tokens = set()
     state.session_id = session_id
     state.exchanges = []
+    state._recall_log = []
 
     creative = state.load_creative()
     creative["cycle"] += 1

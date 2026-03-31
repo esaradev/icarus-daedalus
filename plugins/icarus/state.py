@@ -93,6 +93,21 @@ def log_recall(query, results, source="pre_llm_call"):
         pass
 
 
+def was_recalled(entry_id):
+    """Return True if this entry_id was recalled in the current session."""
+    if not entry_id:
+        return False
+    current_session = session_id
+    for event in reversed(_recall_log):
+        if event.get("event") != "recall":
+            continue
+        if current_session and event.get("session_id") != current_session:
+            continue
+        if entry_id in event.get("result_ids", []):
+            return True
+    return False
+
+
 def log_usage(entry_id, action="referenced"):
     """Log when a recalled entry is actually used (referenced in a write)."""
     entry = {
@@ -113,7 +128,13 @@ def log_usage(entry_id, action="referenced"):
 
 def get_telemetry(last_n=50):
     """Read recent telemetry entries."""
-    empty_summary = {"total_recalls": 0, "total_usages": 0, "unique_entries_recalled": 0, "unique_entries_used": 0, "usage_rate": 0.0}
+    empty_summary = {
+        "total_recalls": 0,
+        "total_usages": 0,
+        "unique_entries_recalled": 0,
+        "unique_entries_used": 0,
+        "usage_rate": 0.0,
+    }
     if not _TELEMETRY_FILE.exists():
         return {"events": [], "summary": empty_summary}
     lines = _TELEMETRY_FILE.read_text("utf-8").strip().split("\n")
@@ -133,15 +154,16 @@ def get_telemetry(last_n=50):
     used_ids = set(u.get("entry_id", "") for u in usages)
     used_ids.discard("")
     recalled_ids.discard("")
+    used_from_recall = used_ids & recalled_ids
 
     return {
         "events": events,
         "summary": {
             "total_recalls": len(recalls),
-            "total_usages": len(usages),
+            "total_usages": sum(1 for u in usages if u.get("entry_id", "") in recalled_ids),
             "unique_entries_recalled": len(recalled_ids),
-            "unique_entries_used": len(used_ids),
-            "usage_rate": round(len(used_ids) / max(len(recalled_ids), 1), 2),
+            "unique_entries_used": len(used_from_recall),
+            "usage_rate": round(len(used_from_recall) / max(len(recalled_ids), 1), 2),
         },
     }
 
@@ -173,6 +195,14 @@ def build_brief():
             "type": "review",
             "id": r.get("id", "?"),
             "review_of": r.get("review_of", ""),
+        })
+    for t in open_tickets[:3]:
+        brief["pending"]["items"].append({
+            "from": t.get("agent", "?"),
+            "summary": t.get("summary", "?"),
+            "type": t.get("type", "ticket"),
+            "id": t.get("id", "?"),
+            "customer_id": t.get("customer_id", "?"),
         })
 
     # recent own work (last 5 entries by this agent)
