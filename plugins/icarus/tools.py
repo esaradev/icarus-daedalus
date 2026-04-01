@@ -142,6 +142,8 @@ def fabric_train(args: dict, **kwargs) -> str:
             batch_size=args.get("batch_size"),
             learning_rate=args.get("learning_rate"),
             checkpoints=args.get("n_checkpoints"),
+            mode=args.get("mode"),
+            min_pairs=args.get("min_pairs", 10),
         )
         return _json(result)
     except Exception as e:

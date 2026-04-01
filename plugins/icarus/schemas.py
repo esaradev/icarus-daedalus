@@ -228,6 +228,15 @@ FABRIC_TRAIN = {
                 "type": "integer",
                 "description": "Training epochs (default: 3)",
             },
+            "mode": {
+                "type": "string",
+                "enum": ["high-precision", "normal", "high-volume"],
+                "description": "Optional export mode. Omit to auto-select the highest-quality mode with enough pairs.",
+            },
+            "min_pairs": {
+                "type": "integer",
+                "description": "Minimum pair count required before starting training (default: 10).",
+            },
             "batch_size": {
                 "type": "integer",
                 "description": "Together batch size, must be >= 8 (default: 8)",

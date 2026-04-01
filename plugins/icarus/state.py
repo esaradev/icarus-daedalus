@@ -643,26 +643,66 @@ def export_training(mode="normal"):
         together_path = Path(tmpdir) / "together.jsonl"
         training_data = together_path.read_text("utf-8") if together_path.exists() else ""
 
+        pair_types = {}
+        raw_pairs_path = Path(tmpdir) / "raw-pairs.json"
+        if raw_pairs_path.exists():
+            try:
+                raw_pairs = json.loads(raw_pairs_path.read_text("utf-8"))
+                for pair in raw_pairs:
+                    ptype = pair.get("metadata", {}).get("type", "unknown")
+                    pair_types[ptype] = pair_types.get(ptype, 0) + 1
+            except Exception:
+                pair_types = {}
+
         return {
             "pairs": pairs,
             "estimated_tokens": tokens,
+            "mode": mode,
+            "pair_types": pair_types,
             "output": output.strip(),
             "training_data_path": str(together_path) if together_path.exists() else None,
             "_training_data": training_data,
         }
 
+def _select_training_export_mode(min_pairs):
+    """Choose the highest-quality export mode that still has enough pairs."""
+    tried = {}
+    for mode in ("high-precision", "normal", "high-volume"):
+        result = export_training(mode=mode)
+        tried[mode] = result
+        if "error" in result:
+            continue
+        if result.get("pairs", 0) >= min_pairs:
+            return mode, result, tried
+    # fallback to normal result if all are below threshold but export succeeded
+    for mode in ("normal", "high-volume", "high-precision"):
+        result = tried.get(mode)
+        if result and "error" not in result:
+            return mode, result, tried
+    return "normal", {"error": "export failed"}, tried
 
-def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_rate=None, checkpoints=None):
+
+def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_rate=None,
+                   checkpoints=None, mode=None, min_pairs=10):
     """Export, upload, and start a Together AI fine-tune."""
     key = _together_key()
     if not key:
         return {"error": "TOGETHER_API_KEY not set in .env"}
 
-    export = export_training(mode="normal")
+    if mode:
+        export = export_training(mode=mode)
+        export_mode = mode
+        tried_modes = {mode: export}
+    else:
+        export_mode, export, tried_modes = _select_training_export_mode(min_pairs)
     if "error" in export:
         return export
-    if export["pairs"] < 10:
-        return {"error": f"only {export['pairs']} pairs, need at least 10"}
+    if export["pairs"] < min_pairs:
+        return {
+            "error": f"only {export['pairs']} pairs in {export_mode}, need at least {min_pairs}",
+            "mode": export_mode,
+            "tried_modes": {k: v.get("pairs", 0) for k, v in tried_modes.items() if "error" not in v},
+        }
 
     training_data = export.get("_training_data", "")
     if not training_data:
@@ -740,6 +780,9 @@ def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_
         "suffix": ft_suffix,
         "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pair_count": export["pairs"],
+        "estimated_tokens": export.get("estimated_tokens", 0),
+        "pair_types": export.get("pair_types", {}),
+        "export_mode": export_mode,
         "status": "pending",
         "eval_scores": None,
         "active": False,
@@ -755,6 +798,9 @@ def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_
         "learning_rate": ft_lr,
         "n_checkpoints": ft_checkpoints,
         "pairs": export["pairs"],
+        "estimated_tokens": export.get("estimated_tokens", 0),
+        "pair_types": export.get("pair_types", {}),
+        "mode": export_mode,
         "file_id": file_id,
     }
 

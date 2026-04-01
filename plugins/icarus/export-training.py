@@ -19,6 +19,53 @@ from pathlib import Path
 FABRIC_DIR = Path(os.environ.get("FABRIC_DIR", Path.home() / "fabric"))
 
 
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _has_evidence(entry) -> bool:
+    return any(str(entry.get(field, "")).strip() for field in ("evidence", "source_tool", "artifact_paths"))
+
+
+def _is_structured_session(entry) -> bool:
+    body = str(entry.get("body", ""))
+    return "## Task" in body and "## Result" in body
+
+
+def _entry_quality(entry) -> dict:
+    verified = _truthy(entry.get("verified", ""))
+    training_value = str(entry.get("training_value", "")).strip()
+    has_evidence = _has_evidence(entry)
+    is_review_linked = entry.get("type") == "review" and bool(entry.get("review_of"))
+    structured_session = entry.get("type") == "session" and _is_structured_session(entry)
+    is_completed = str(entry.get("status", "")).strip() == "completed"
+    return {
+        "verified": verified,
+        "training_value": training_value,
+        "has_evidence": has_evidence,
+        "is_review_linked": is_review_linked,
+        "structured_session": structured_session,
+        "is_completed": is_completed,
+        "is_high_precision": (
+            training_value == "high"
+            or verified
+            or is_review_linked
+            or (structured_session and training_value in ("high", "normal"))
+            or (is_completed and has_evidence)
+        ),
+        "is_normal": (
+            training_value != "low"
+            and (
+                entry.get("type") != "session"
+                or structured_session
+                or verified
+                or training_value == "high"
+                or has_evidence
+            )
+        ),
+    }
+
+
 def _strip_generated_obsidian_sections(body: str) -> str:
     body = re.sub(
         r"\n*<!-- ICARUS_OBSIDIAN_LINKS_START -->.*?<!-- ICARUS_OBSIDIAN_LINKS_END -->\n*",
@@ -165,14 +212,23 @@ def extract_pairs(entries):
         body = e.get("body", "")
         summary = e.get("summary", "")
 
-        tv = e.get("training_value", "")
-        verified = str(e.get("verified", "")).lower() == "true"
+        quality = _entry_quality(e)
+        tv = quality["training_value"]
+        verified = quality["verified"]
+        has_evidence = quality["has_evidence"]
 
         if not body or len(body) < 20:
             continue
 
         # base metadata shared by all pairs from this entry
-        base_meta = {"agent": agent, "platform": platform, "training_value": tv, "verified": verified}
+        base_meta = {
+            "agent": agent,
+            "platform": platform,
+            "training_value": tv,
+            "verified": verified,
+            "has_evidence": has_evidence,
+            "entry_type": entry_type,
+        }
 
         # ── OUTCOME PAIR: focused summary → outcome ──
         if e.get("outcome"):
@@ -202,9 +258,10 @@ def extract_pairs(entries):
                         result_match.group(1).strip()[:500],
                         {**base_meta, "type": "session-structured"},
                     )
-            # always also add the generic session pair
-            user_msg = f"[session] Summarize what was accomplished."
-            add_pair(user_msg, body, {**base_meta, "type": "session"})
+            # generic session pairs are much noisier; only keep when grounded
+            if verified or tv == "high" or has_evidence:
+                user_msg = f"[session] Summarize what was accomplished."
+                add_pair(user_msg, body, {**base_meta, "type": "session"})
 
         elif entry_type == "review":
             user_msg = f"[review] Review the following code or work."
@@ -368,14 +425,10 @@ def main():
     # filter by mode
     excluded = 0
     if args.mode == "high-precision":
-        entries = [e for e in all_entries
-                   if e.get("training_value") == "high"
-                   or e.get("status") == "completed"
-                   or (e.get("type") == "review" and e.get("review_of"))
-                   or str(e.get("verified", "")).lower() == "true"]
+        entries = [e for e in all_entries if _entry_quality(e)["is_high_precision"]]
         excluded = len(all_entries) - len(entries)
     elif args.mode == "normal":
-        entries = [e for e in all_entries if e.get("training_value") != "low"]
+        entries = [e for e in all_entries if _entry_quality(e)["is_normal"]]
         excluded = len(all_entries) - len(entries)
     else:
         entries = all_entries
@@ -393,6 +446,7 @@ def main():
         ptype = meta.get("type", "")
         tv = meta.get("training_value", "")
         is_verified = meta.get("verified", False)
+        has_evidence = meta.get("has_evidence", False)
         author = meta.get("author", "")
         reviewer = meta.get("reviewer", "")
         is_cross_agent = bool(author and reviewer and author != reviewer)
@@ -406,7 +460,11 @@ def main():
         elif ptype == "session-structured" and tv == "high":
             weighted.extend([p] * 3)
         elif tv == "high":
-            weighted.extend([p] * (3 if is_verified else 2))
+            weighted.extend([p] * (4 if (is_verified and has_evidence) else 3 if is_verified else 2))
+        elif has_evidence and is_verified:
+            weighted.extend([p] * 3)
+        elif has_evidence:
+            weighted.extend([p] * 2)
         elif is_verified:
             weighted.extend([p] * 2)
         else:
@@ -448,6 +506,7 @@ def main():
     print(f"  review pairs:      {review_count}")
     print(f"  cross-platform:    {xplat_count}")
     print(f"  estimated tokens:  {total_tokens:,}")
+    print(f"  source entries:    {len(entries)} selected / {len(all_entries)} total ({excluded} excluded)")
     print(f"  by type:")
     for t, c in sorted(type_counts.items()):
         print(f"    {t}: {c}")
