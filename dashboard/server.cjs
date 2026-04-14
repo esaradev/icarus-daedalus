@@ -279,6 +279,12 @@ function getData() {
 const WIKI_DIR = path.join(FABRIC, "wiki");
 const WIKI_SUBS = ["entities", "topics", "sources", "indexes", "notes"];
 
+function wikiTypeForSubdir(sub, fmType) {
+  if (fmType) return fmType;
+  if (sub === "indexes") return "index";
+  return sub.replace(/s$/, "");
+}
+
 function parseWikiFrontmatter(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!m) return { fm: {}, body: text };
@@ -315,7 +321,7 @@ function scanWiki() {
       const { fm, body } = parseWikiFrontmatter(text);
       pages.push({
         path: `${sub}/${f.replace(/\.md$/, "")}`,
-        type: fm.type || sub.replace(/s$/, ""),
+        type: wikiTypeForSubdir(sub, fm.type),
         title: fm.title || f.replace(/\.md$/, ""),
         summary: fm.summary || "",
         frontmatter: fm,

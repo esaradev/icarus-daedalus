@@ -241,6 +241,27 @@ def _write_frontmatter(fm: dict, body: str) -> str:
     return "\n".join(lines) + body
 
 
+def _generated_markers(key: str) -> tuple[str, str]:
+    safe = _slugify(key, max_len=80)
+    return (
+        f"<!-- ICARUS_GENERATED:{safe}:START -->",
+        f"<!-- ICARUS_GENERATED:{safe}:END -->",
+    )
+
+
+def _upsert_generated_block(body: str, key: str, content: str) -> str:
+    start, end = _generated_markers(key)
+    block = f"{start}\n{content.strip()}\n{end}"
+    pattern = re.compile(
+        rf"{re.escape(start)}.*?{re.escape(end)}",
+        re.DOTALL,
+    )
+    if pattern.search(body):
+        return pattern.sub(block, body)
+    body = body.rstrip()
+    return f"{body}\n\n{block}\n"
+
+
 def _upsert_page(
     path: Path,
     page_type: str,
@@ -248,6 +269,7 @@ def _upsert_page(
     summary: str,
     source_link: str,
     body_append: Optional[str] = None,
+    generated_block_key: Optional[str] = None,
 ) -> bool:
     """Create or update a wiki page. Returns True if created, False if updated."""
     now = _now()
@@ -261,7 +283,10 @@ def _upsert_page(
             )
         fm["updated"] = now
         if body_append:
-            body = body.rstrip() + "\n\n" + body_append.strip() + "\n"
+            if generated_block_key:
+                body = _upsert_generated_block(body, generated_block_key, body_append)
+            elif body_append.strip() not in body:
+                body = body.rstrip() + "\n\n" + body_append.strip() + "\n"
         path.write_text(_write_frontmatter(fm, body), "utf-8")
         return False
 
@@ -275,7 +300,10 @@ def _upsert_page(
     }
     body = f"\n# {title}\n\n{summary}\n"
     if body_append:
-        body += "\n" + body_append.strip() + "\n"
+        if generated_block_key:
+            body += "\n" + _upsert_generated_block("", generated_block_key, body_append).strip() + "\n"
+        else:
+            body += "\n" + body_append.strip() + "\n"
     body += f"\n## Sources\n\n- {source_link}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_write_frontmatter(fm, body), "utf-8")
@@ -305,7 +333,8 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
 
     text = src.read_text("utf-8", errors="replace")
     content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-    source_slug = _slugify(src.stem)
+    rel_source = src.relative_to(raw).with_suffix("").as_posix()
+    source_slug = _slugify(rel_source.replace("/", "-"))
     source_page = wiki / "sources" / f"{source_slug}.md"
     source_link = f"[[sources/{source_slug}]]"
     title_guess = _derive_title(text, fallback=src.stem)
@@ -331,6 +360,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         summary,
         source_link=source_link,
         body_append=src_body,
+        generated_block_key=f"source:{rel_source}",
     )
     created: list[str] = []
     updated: list[str] = []
@@ -348,6 +378,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
             page_summary,
             source_link=source_link,
             body_append=f"_Seen in {source_link}._",
+            generated_block_key=f"source-ref:{source_slug}",
         )
         (created if was_created else updated).append(str(page))
         page_links.append(link)
