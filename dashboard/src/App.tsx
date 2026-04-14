@@ -7,6 +7,7 @@ import { Fleet } from "./pages/fleet.tsx"
 import { Memory } from "./pages/memory.tsx"
 import { ActivityPage } from "./pages/activity.tsx"
 import { Logs } from "./pages/logs.tsx"
+import { Icarus } from "./pages/icarus.tsx"
 
 const PAGE_LABELS: Record<string, string> = {
   overview: "Overview",
@@ -14,6 +15,7 @@ const PAGE_LABELS: Record<string, string> = {
   memory: "Memory",
   activity: "Activity",
   logs: "Logs",
+  icarus: "Icarus — Persistent Knowledge",
 }
 
 function App() {
@@ -49,6 +51,7 @@ function App() {
           {data && page === "memory" && <Memory data={data} />}
           {data && page === "activity" && <ActivityPage data={data} />}
           {data && page === "logs" && <Logs data={data} />}
+          {page === "icarus" && <Icarus />}
         </div>
       </main>
     </>

@@ -1,6 +1,6 @@
 name: icarus
-version: 0.3.0
-description: Self-memory and replacement models for Hermes agents. Remember your work. Train your replacement.
+version: 0.4.0
+description: Self-memory, replacement models, and a persistent markdown wiki for Hermes agents. Remember your work. Train your replacement. Grow a knowledge base.
 author: esaradev
 provides_tools:
   - fabric_recall
@@ -19,6 +19,10 @@ provides_tools:
   - fabric_telemetry
   - fabric_init_obsidian
   - fabric_report
+  - wiki_init
+  - wiki_ingest
+  - wiki_query
+  - wiki_lint
 provides_hooks:
   - on_session_start
   - pre_llm_call

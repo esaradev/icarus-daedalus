@@ -80,10 +80,20 @@ def register(ctx):
     ctx.register_tool(name="fabric_report", toolset="fabric",
                       schema=schemas.FABRIC_REPORT, handler=tools.fabric_report)
 
+    # wiki (persistent knowledge layer)
+    ctx.register_tool(name="wiki_init", toolset="icarus_wiki",
+                      schema=schemas.WIKI_INIT, handler=tools.wiki_init)
+    ctx.register_tool(name="wiki_ingest", toolset="icarus_wiki",
+                      schema=schemas.WIKI_INGEST, handler=tools.wiki_ingest)
+    ctx.register_tool(name="wiki_query", toolset="icarus_wiki",
+                      schema=schemas.WIKI_QUERY, handler=tools.wiki_query)
+    ctx.register_tool(name="wiki_lint", toolset="icarus_wiki",
+                      schema=schemas.WIKI_LINT, handler=tools.wiki_lint)
+
     # hooks
     ctx.register_hook("on_session_start", hooks.on_session_start)
     ctx.register_hook("pre_llm_call", hooks.pre_llm_call)
     ctx.register_hook("post_llm_call", hooks.post_llm_call)
     ctx.register_hook("on_session_end", hooks.on_session_end)
 
-    logger.info("icarus v3 registered (16 tools, 4 hooks)")
+    logger.info("icarus v3 registered (20 tools, 4 hooks)")

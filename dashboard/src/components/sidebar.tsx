@@ -1,4 +1,4 @@
-import { LayoutDashboard, Bot, Database, Activity, ScrollText } from "lucide-react"
+import { LayoutDashboard, Bot, Database, Activity, ScrollText, BookOpen } from "lucide-react"
 import { cn } from "../lib/cn.ts"
 
 const NAV = [
@@ -7,6 +7,7 @@ const NAV = [
   { id: "memory", label: "Memory", icon: Database },
   { id: "activity", label: "Activity", icon: Activity },
   { id: "logs", label: "Logs", icon: ScrollText },
+  { id: "icarus", label: "Icarus", icon: BookOpen },
 ] as const
 
 export type Page = (typeof NAV)[number]["id"]
