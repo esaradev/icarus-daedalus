@@ -274,6 +274,88 @@ function getData() {
   }, platDist, typeDist, timeline, telemetry };
 }
 
+// ── Wiki (Icarus persistent knowledge layer) ─────────────────
+
+const WIKI_DIR = path.join(FABRIC, "wiki");
+const WIKI_SUBS = ["entities", "topics", "sources", "indexes", "notes"];
+
+function wikiTypeForSubdir(sub, fmType) {
+  if (fmType) return fmType;
+  if (sub === "indexes") return "index";
+  return sub.replace(/s$/, "");
+}
+
+function parseWikiFrontmatter(text) {
+  const m = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { fm: {}, body: text };
+  const fm = {};
+  m[1].split("\n").forEach((line) => {
+    const i = line.indexOf(":");
+    if (i < 0) return;
+    const k = line.slice(0, i).trim();
+    let v = line.slice(i + 1).trim();
+    if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+    fm[k] = v;
+  });
+  return { fm, body: text.slice(m[0].length) };
+}
+
+function extractLinks(text) {
+  const out = [];
+  const re = /\[\[([^\]]+)\]\]/g;
+  let m;
+  while ((m = re.exec(text)) !== null) out.push(m[1]);
+  return Array.from(new Set(out));
+}
+
+function scanWiki() {
+  const pages = [];
+  if (!exists(WIKI_DIR)) return { pages, indexBody: "", logBody: "", homeBody: "" };
+  for (const sub of WIKI_SUBS) {
+    const d = path.join(WIKI_DIR, sub);
+    if (!exists(d)) continue;
+    for (const f of fs.readdirSync(d)) {
+      if (!f.endsWith(".md")) continue;
+      const full = path.join(d, f);
+      const text = safe(full);
+      const { fm, body } = parseWikiFrontmatter(text);
+      pages.push({
+        path: `${sub}/${f.replace(/\.md$/, "")}`,
+        type: wikiTypeForSubdir(sub, fm.type),
+        title: fm.title || f.replace(/\.md$/, ""),
+        summary: fm.summary || "",
+        frontmatter: fm,
+        body,
+        links: extractLinks(body),
+        updated: fm.updated || fm.created || "",
+      });
+    }
+  }
+  pages.sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
+  return {
+    pages,
+    indexBody: safe(path.join(WIKI_DIR, "index.md")),
+    logBody: safe(path.join(WIKI_DIR, "log.md")),
+    homeBody: safe(path.join(WIKI_DIR, "Home.md")),
+  };
+}
+
+function readWikiPage(relPath) {
+  const safeRel = String(relPath || "").replace(/^\/+/, "");
+  if (safeRel.includes("..") || !safeRel.endsWith(".md")) return null;
+  const full = path.join(WIKI_DIR, safeRel);
+  if (!full.startsWith(WIKI_DIR + path.sep) && full !== WIKI_DIR) return null;
+  if (!exists(full)) return null;
+  const text = safe(full);
+  const { fm, body } = parseWikiFrontmatter(text);
+  return {
+    path: safeRel.replace(/\.md$/, ""),
+    frontmatter: fm,
+    body,
+    links: extractLinks(body),
+  };
+}
+
 function createServer() {
   return http.createServer((req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -281,6 +363,15 @@ function createServer() {
     if (req.url === "/api/data") { res.end(JSON.stringify(getData())); return; }
     if (req.url === "/api/entries") { res.end(JSON.stringify(scanFabric())); return; }
     if (req.url === "/api/health") { res.end(JSON.stringify({ ok: true })); return; }
+    if (req.url === "/api/wiki/pages") { res.end(JSON.stringify(scanWiki())); return; }
+    if (req.url && req.url.startsWith("/api/wiki/page")) {
+      const u = new URL(req.url, `http://${HOST}`);
+      const p = u.searchParams.get("path");
+      const page = readWikiPage(p ? `${p}.md` : "");
+      if (!page) { res.writeHead(404); res.end("{}"); return; }
+      res.end(JSON.stringify(page));
+      return;
+    }
     res.writeHead(404); res.end("{}");
   });
 }
@@ -298,4 +389,6 @@ module.exports = {
   getData,
   parseAgents,
   scanFabric,
+  scanWiki,
+  readWikiPage,
 };

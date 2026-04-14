@@ -234,3 +234,43 @@ def fabric_report(args: dict, **kwargs) -> str:
         return _json(result)
     except Exception as e:
         return _json({"error": str(e)})
+
+
+# ── Wiki (persistent knowledge layer) ────────────────────────────────
+
+def wiki_init(args: dict, **kwargs) -> str:
+    try:
+        from . import wiki
+        return _json(wiki.init_wiki(state.FABRIC_DIR))
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def wiki_ingest(args: dict, **kwargs) -> str:
+    source_path = args.get("source_path", "").strip()
+    if not source_path:
+        return _json({"error": "source_path is required"})
+    try:
+        from . import wiki
+        return _json(wiki.ingest(source_path, state.FABRIC_DIR))
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def wiki_query(args: dict, **kwargs) -> str:
+    question = args.get("question", "").strip()
+    if not question:
+        return _json({"error": "question is required"})
+    try:
+        from . import wiki
+        return _json(wiki.query(question, state.FABRIC_DIR, max_hits=args.get("max_hits", 10)))
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def wiki_lint(args: dict, **kwargs) -> str:
+    try:
+        from . import wiki
+        return _json(wiki.lint(state.FABRIC_DIR))
+    except Exception as e:
+        return _json({"error": str(e)})

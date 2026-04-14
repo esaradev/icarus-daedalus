@@ -418,3 +418,64 @@ FABRIC_REPORT = {
         "required": [],
     },
 }
+
+
+# ── Wiki (persistent knowledge layer) ────────────────────────────────
+
+WIKI_INIT = {
+    "name": "wiki_init",
+    "description": (
+        "Create the Icarus wiki scaffold under $FABRIC_DIR: raw/inbox/, "
+        "wiki/ with entities/topics/sources/indexes/notes/, Home.md, "
+        "index.md, log.md, and _schema.json. Idempotent — safe to re-run."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
+WIKI_INGEST = {
+    "name": "wiki_ingest",
+    "description": (
+        "Ingest a raw source file (must live under $FABRIC_DIR/raw/) into the "
+        "wiki. Creates a source page with provenance, extracts up to 4 entity/"
+        "topic pages via deterministic heuristics (headings + repeated "
+        "capitalized phrases), updates index.md and appends to log.md. "
+        "Drop files into raw/inbox/ first, then call this."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "source_path": {
+                "type": "string",
+                "description": "Absolute path to a file under $FABRIC_DIR/raw/",
+            },
+        },
+        "required": ["source_path"],
+    },
+}
+
+WIKI_QUERY = {
+    "name": "wiki_query",
+    "description": (
+        "Search the wiki (and raw sources as fallback) for a phrase. "
+        "Returns matching files with snippets. Wiki-first so synthesized "
+        "knowledge is preferred over raw material."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "Phrase or question"},
+            "max_hits": {"type": "integer", "description": "Max results (default 10)"},
+        },
+        "required": ["question"],
+    },
+}
+
+WIKI_LINT = {
+    "name": "wiki_lint",
+    "description": (
+        "Report wiki health issues: broken [[wikilinks]], orphan pages "
+        "with no inbound links, and pages without source provenance. "
+        "Report-only — does not modify any files."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}

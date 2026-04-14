@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import type { DashboardData, Telemetry } from "./types.ts"
+import type { DashboardData, Telemetry, WikiData } from "./types.ts"
 
 function defaultTelemetry(): Telemetry {
   return {
@@ -66,6 +66,25 @@ export function useData(interval = 5000) {
       fetch("/api/data")
         .then((r) => r.json())
         .then((d: DashboardData) => { if (active) { setData(normalizeData(d)); setError(false) } })
+        .catch(() => { if (active) setError(true) })
+    load()
+    const id = setInterval(load, interval)
+    return () => { active = false; clearInterval(id) }
+  }, [interval])
+
+  return { data, error }
+}
+
+export function useWiki(interval = 10000) {
+  const [data, setData] = useState<WikiData | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    const load = () =>
+      fetch("/api/wiki/pages")
+        .then((r) => r.json())
+        .then((d: WikiData) => { if (active) { setData(d); setError(false) } })
         .catch(() => { if (active) setError(true) })
     load()
     const id = setInterval(load, interval)

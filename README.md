@@ -220,6 +220,20 @@ cd ~/fabric && git remote add origin git@github.com:YOU/fabric.git
 bash fabric-sync.sh watch    # auto-sync every 60 seconds
 ```
 
+## Wiki (v1) — persistent knowledge layer
+
+Fabric is a chronological log of agent events. The wiki is a compounding, interlinked knowledge base — inspired by Andrej Karpathy's LLM Wiki pattern. Drop a source into `~/fabric/raw/inbox/`, call `wiki_ingest`, and the agent produces a source page (with hash + provenance) plus up to 4 entity/topic pages, refreshes `~/fabric/wiki/index.md`, and appends to `~/fabric/wiki/log.md`.
+
+```
+~/fabric/
+  raw/inbox/        drop zone (immutable)
+  wiki/
+    Home.md index.md log.md _schema.json
+    entities/ topics/ sources/ indexes/ notes/
+```
+
+Tools: `wiki_init`, `wiki_ingest`, `wiki_query`, `wiki_lint`. Skill doc at `skills/llm-wiki/SKILL.md`. Browse inside the Hermes Dashboard `Icarus` view, or open `~/fabric/` in Obsidian — the wikilinks fill the graph immediately. Runs the same dashboard (`npm run dev`), just a new sidebar entry. No new database. Markdown-first, git-revertable, Obsidian-compatible.
+
 ## Demo
 
 See `examples/hermes-demo/` for two hermes agents (Icarus and Daedalus) proving cross-platform memory works. Icarus writes code on Slack, Daedalus reviews on Telegram, both recall each other's work from any platform.

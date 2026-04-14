@@ -88,3 +88,21 @@ export type Telemetry = {
   }
   projects: Array<{ id: string; entries: number; agents: number; sessions: number }>
 }
+
+export type WikiPage = {
+  path: string
+  type: string
+  title: string
+  summary: string
+  frontmatter: Record<string, string>
+  body: string
+  links: string[]
+  updated: string
+}
+
+export type WikiData = {
+  pages: WikiPage[]
+  indexBody: string
+  logBody: string
+  homeBody: string
+}
