@@ -5,14 +5,20 @@ Three-folder contract under FABRIC_DIR:
   wiki/    LLM-owned pages (entities, topics, sources, indexes, notes)
   wiki/_schema.json   ingest rules + conventions
 
-v1 scope:
+Tools:
   init_wiki — scaffold
   ingest    — raw source -> source page + entity/topic pages + index + log
   query     — grep wiki first, raw second
   lint      — report broken wikilinks, orphan pages, pages without sources
 
-Entity extraction in v1 is deterministic: markdown headings + capitalized noun
-phrases + URLs. No LLM call. See SKILL.md for upgrade notes.
+Entity/topic extraction:
+  v1.0 shipped a deterministic heuristic (headings + repeated capitalized
+  phrases). v1.1 adds an LLM path via Together AI (reuses TOGETHER_API_KEY)
+  that returns a JSON list of {kind, title, slug, summary}. The LLM path
+  falls back silently to the heuristic when the key is missing, the call
+  errors, or the response is malformed. Set WIKI_LLM_EXTRACTION=0 to force
+  the heuristic. Every ingest records which path ran via extraction_mode
+  in the response and in the source page frontmatter.
 """
 
 from __future__ import annotations
@@ -20,13 +26,20 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import urllib.error
+import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+LLM_MODEL_DEFAULT = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
+LLM_ENDPOINT = "https://api.together.xyz/v1/chat/completions"
+LLM_TIMEOUT_S = 30
 
 WIKI_SUBDIRS = ("entities", "topics", "sources", "indexes", "notes")
 
@@ -155,13 +168,12 @@ _STOPPHRASES = {
 }
 
 
-def _extract_candidates(text: str, max_pages: int = 5) -> list[dict]:
-    """Return up to max_pages candidate entity/topic dicts.
+def _extract_candidates_heuristic(text: str, max_pages: int = 5) -> list[dict]:
+    """Deterministic v1 extractor. Each dict: {kind, title, slug, evidence}.
 
-    Each dict: {kind: "entity"|"topic", title, slug, evidence}
-    Heuristic: headings become topic pages; repeated capitalized phrases
-    become entity pages. We interleave topics and entities so both kinds
-    show up even when one is abundant.
+    Headings -> topic pages. Repeated capitalized phrases -> entity pages.
+    Topics and entities are interleaved so both kinds surface when one is
+    abundant. Pure Python, no network.
     """
     topics: list[dict] = []
     entities: list[dict] = []
@@ -210,6 +222,132 @@ def _extract_candidates(text: str, max_pages: int = 5) -> list[dict]:
         if j < len(entities):
             out.append(entities[j]); j += 1
     return out
+
+
+# ── LLM extractor (v1.1) ─────────────────────────────────────────────────
+
+_LLM_SYSTEM = (
+    "You extract structured entity and topic candidates from a markdown source "
+    "for a personal knowledge wiki. Return strict JSON only, no prose."
+)
+
+_LLM_USER_TEMPLATE = """Read the source and return up to {max_pages} candidates that would each make a useful wiki page.
+
+Rules:
+- kind is "entity" for people, products, organisations, projects.
+- kind is "topic" for concepts, themes, techniques, patterns.
+- title is the human-readable page title.
+- slug is kebab-case, lowercase, no punctuation, no spaces, <= 64 chars.
+- summary is one line, <= 160 chars, grounded strictly in the source.
+- Omit generic filler ("Introduction", "Overview") and pronouns.
+- Prefer entities that appear only once over repeated noise.
+
+Output JSON object exactly like:
+{{"candidates": [{{"kind": "entity", "title": "Andrej Karpathy", "slug": "andrej-karpathy", "summary": "..."}}]}}
+
+Source:
+<<<
+{source}
+>>>"""
+
+
+def _together_key_for_wiki() -> str:
+    # defer import so tests can stub state.FABRIC_DIR without paying for the full state init
+    from . import state
+    return state._together_key()
+
+
+def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
+    """Call Together chat to get entity/topic candidates as JSON.
+
+    Raises on any failure (no-key, network, malformed JSON, empty result).
+    Caller is responsible for fallback.
+    """
+    key = _together_key_for_wiki()
+    if not key:
+        raise RuntimeError("TOGETHER_API_KEY not set")
+
+    model = os.environ.get("WIKI_LLM_MODEL", LLM_MODEL_DEFAULT)
+    # bound the source we send; most sources are small, but cap to keep latency sane
+    trimmed = text if len(text) <= 8000 else text[:8000]
+    prompt = _LLM_USER_TEMPLATE.format(max_pages=max_pages, source=trimmed)
+
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _LLM_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 512,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        LLM_ENDPOINT,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    resp = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S)
+    body = json.loads(resp.read())
+    content = body["choices"][0]["message"]["content"]
+    parsed = json.loads(content)
+    raw_items = parsed.get("candidates") if isinstance(parsed, dict) else None
+    if not isinstance(raw_items, list):
+        raise ValueError("LLM response missing 'candidates' list")
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        title = (item.get("title") or "").strip()
+        if kind not in ("entity", "topic") or len(title) < 3:
+            continue
+        slug = _slugify(item.get("slug") or title)
+        if slug in seen:
+            continue
+        seen.add(slug)
+        summary = (item.get("summary") or "").strip()[:240]
+        out.append({
+            "kind": kind,
+            "title": title,
+            "slug": slug,
+            "evidence": summary or "LLM-extracted",
+        })
+        if len(out) >= max_pages:
+            break
+    if not out:
+        raise ValueError("LLM returned no valid candidates")
+    return out
+
+
+def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str]:
+    """Dispatch to LLM or heuristic and report which path ran.
+
+    Returns (candidates, mode) where mode is one of:
+      "llm"                — LLM call succeeded
+      "heuristic"          — WIKI_LLM_EXTRACTION=0 (explicit opt-out)
+      "heuristic-no-key"   — no API key configured
+      "heuristic-fallback" — LLM call attempted but failed
+    """
+    if os.environ.get("WIKI_LLM_EXTRACTION", "1") == "0":
+        return _extract_candidates_heuristic(text, max_pages), "heuristic"
+    try:
+        if not _together_key_for_wiki():
+            return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key"
+    except Exception:
+        return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key"
+    try:
+        return _extract_candidates_llm(text, max_pages), "llm"
+    except Exception as exc:
+        logger.info("icarus.wiki: LLM extraction fell back (%s)", exc)
+        return _extract_candidates_heuristic(text, max_pages), "heuristic-fallback"
 
 
 # ── Page I/O ─────────────────────────────────────────────────────────────
@@ -270,6 +408,7 @@ def _upsert_page(
     source_link: str,
     body_append: Optional[str] = None,
     generated_block_key: Optional[str] = None,
+    extra_frontmatter: Optional[dict] = None,
 ) -> bool:
     """Create or update a wiki page. Returns True if created, False if updated."""
     now = _now()
@@ -282,6 +421,9 @@ def _upsert_page(
                 f"[{existing}, {source_link!r}]" if existing else f"[{source_link!r}]"
             )
         fm["updated"] = now
+        if extra_frontmatter:
+            for k, v in extra_frontmatter.items():
+                fm[k] = v
         if body_append:
             if generated_block_key:
                 body = _upsert_generated_block(body, generated_block_key, body_append)
@@ -298,6 +440,9 @@ def _upsert_page(
         "created": now,
         "updated": now,
     }
+    if extra_frontmatter:
+        for k, v in extra_frontmatter.items():
+            fm[k] = v
     body = f"\n# {title}\n\n{summary}\n"
     if body_append:
         if generated_block_key:
@@ -340,7 +485,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
     title_guess = _derive_title(text, fallback=src.stem)
     summary = _derive_summary(text)
 
-    candidates = _extract_candidates(text, max_pages=4)
+    candidates, extraction_mode = _extract_candidates(text, max_pages=4)
     see_also = "\n".join(
         f"- [[{('entities' if c['kind'] == 'entity' else 'topics')}/{c['slug']}]]"
         for c in candidates
@@ -361,6 +506,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         source_link=source_link,
         body_append=src_body,
         generated_block_key=f"source:{rel_source}",
+        extra_frontmatter={"extraction_mode": extraction_mode},
     )
     created: list[str] = []
     updated: list[str] = []
@@ -398,6 +544,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         "pages_created": created,
         "pages_updated": updated,
         "links": page_links,
+        "extraction_mode": extraction_mode,
     }
 
 

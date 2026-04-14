@@ -437,9 +437,14 @@ WIKI_INGEST = {
     "description": (
         "Ingest a raw source file (must live under $FABRIC_DIR/raw/) into the "
         "wiki. Creates a source page with provenance, extracts up to 4 entity/"
-        "topic pages via deterministic heuristics (headings + repeated "
-        "capitalized phrases), updates index.md and appends to log.md. "
-        "Drop files into raw/inbox/ first, then call this."
+        "topic pages, updates index.md and appends to log.md. Drop files "
+        "into raw/inbox/ first, then call this.\n"
+        "Entity/topic extraction runs via an LLM (Together AI, reuses "
+        "TOGETHER_API_KEY) when available and falls back to a deterministic "
+        "heuristic (headings + repeated capitalized phrases) when the key is "
+        "missing, the call fails, or WIKI_LLM_EXTRACTION=0. The response "
+        "includes an `extraction_mode` field: 'llm', 'heuristic', "
+        "'heuristic-no-key', or 'heuristic-fallback'."
     ),
     "parameters": {
         "type": "object",
