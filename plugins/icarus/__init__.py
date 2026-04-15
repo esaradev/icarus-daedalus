@@ -89,6 +89,8 @@ def register(ctx):
                       schema=schemas.WIKI_QUERY, handler=tools.wiki_query)
     ctx.register_tool(name="wiki_lint", toolset="icarus_wiki",
                       schema=schemas.WIKI_LINT, handler=tools.wiki_lint)
+    ctx.register_tool(name="wiki_llm_status", toolset="icarus_wiki",
+                      schema=schemas.WIKI_LLM_STATUS, handler=tools.wiki_llm_status)
 
     # hooks
     ctx.register_hook("on_session_start", hooks.on_session_start)
@@ -96,4 +98,4 @@ def register(ctx):
     ctx.register_hook("post_llm_call", hooks.post_llm_call)
     ctx.register_hook("on_session_end", hooks.on_session_end)
 
-    logger.info("icarus v3 registered (20 tools, 4 hooks)")
+    logger.info("icarus v3 registered (21 tools, 4 hooks)")

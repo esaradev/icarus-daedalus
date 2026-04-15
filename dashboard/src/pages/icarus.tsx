@@ -166,6 +166,7 @@ function PageView({ page, onNavigate, pages }: {
 }) {
   const paths = new Set(pages.map((p) => p.path))
   const mode = page.frontmatter.extraction_mode
+  const modeReason = page.frontmatter.extraction_reason
   return (
     <article>
       <div className="flex items-baseline justify-between mb-1">
@@ -173,7 +174,9 @@ function PageView({ page, onNavigate, pages }: {
         <div className="flex items-center gap-2">
           {mode && (
             <span
-              title="How entity/topic pages were extracted from the source"
+              title={modeReason
+                ? `How entity/topic pages were extracted from the source: ${modeReason}`
+                : "How entity/topic pages were extracted from the source"}
               className={cn(
                 "text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded border",
                 MODE_STYLES[mode] || "border-border text-text-3"
@@ -186,6 +189,9 @@ function PageView({ page, onNavigate, pages }: {
         </div>
       </div>
       {page.summary && <p className="text-[12px] text-text-2 mb-4">{page.summary}</p>}
+      {modeReason && (
+        <p className="text-[11px] text-text-3 mb-4">{modeReason}</p>
+      )}
       <div className="prose-wiki text-[13px] leading-6">
         {renderMarkdown(page.body, paths, onNavigate)}
       </div>

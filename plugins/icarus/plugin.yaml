@@ -23,6 +23,7 @@ provides_tools:
   - wiki_ingest
   - wiki_query
   - wiki_lint
+  - wiki_llm_status
 provides_hooks:
   - on_session_start
   - pre_llm_call

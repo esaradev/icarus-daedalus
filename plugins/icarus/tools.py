@@ -274,3 +274,11 @@ def wiki_lint(args: dict, **kwargs) -> str:
         return _json(wiki.lint(state.FABRIC_DIR))
     except Exception as e:
         return _json({"error": str(e)})
+
+
+def wiki_llm_status(args: dict, **kwargs) -> str:
+    try:
+        from . import wiki
+        return _json(wiki.llm_status(live=bool(args.get("live", True))))
+    except Exception as e:
+        return _json({"error": str(e)})

@@ -484,3 +484,22 @@ WIKI_LINT = {
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
+
+WIKI_LLM_STATUS = {
+    "name": "wiki_llm_status",
+    "description": (
+        "Check whether wiki LLM extraction is configured and whether the "
+        "Together chat completions endpoint accepts the current key/model. "
+        "Use this to debug heuristic-fallback vs llm behavior."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "live": {
+                "type": "boolean",
+                "description": "When true (default), make a live Together API request.",
+            },
+        },
+        "required": [],
+    },
+}

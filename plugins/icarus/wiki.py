@@ -252,9 +252,36 @@ Source:
 
 
 def _together_key_for_wiki() -> str:
-    # defer import so tests can stub state.FABRIC_DIR without paying for the full state init
-    from . import state
+    key = os.environ.get("TOGETHER_API_KEY", "").strip()
+    if key:
+        return key
+
+    # Prefer the plugin package import path Hermes uses, but allow standalone
+    # imports of wiki.py during local debugging.
+    try:
+        from . import state  # type: ignore
+    except ImportError:
+        try:
+            import state  # type: ignore
+        except ImportError:
+            return ""
     return state._together_key()
+
+
+def _summarize_llm_error(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            detail = ""
+        if detail:
+            detail = re.sub(r"\s+", " ", detail)[:160]
+            return f"http-{exc.code}: {detail}"
+        return f"http-{exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return f"network: {exc.reason}"
+    return re.sub(r"\s+", " ", str(exc)).strip()[:160] or exc.__class__.__name__
 
 
 def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
@@ -327,7 +354,7 @@ def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
     return out
 
 
-def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str]:
+def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str, str]:
     """Dispatch to LLM or heuristic and report which path ran.
 
     Returns (candidates, mode) where mode is one of:
@@ -337,17 +364,73 @@ def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str]
       "heuristic-fallback" — LLM call attempted but failed
     """
     if os.environ.get("WIKI_LLM_EXTRACTION", "1") == "0":
-        return _extract_candidates_heuristic(text, max_pages), "heuristic"
+        return _extract_candidates_heuristic(text, max_pages), "heuristic", "WIKI_LLM_EXTRACTION=0"
     try:
         if not _together_key_for_wiki():
-            return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key"
-    except Exception:
-        return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key"
-    try:
-        return _extract_candidates_llm(text, max_pages), "llm"
+            return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key", "TOGETHER_API_KEY not set"
     except Exception as exc:
-        logger.info("icarus.wiki: LLM extraction fell back (%s)", exc)
-        return _extract_candidates_heuristic(text, max_pages), "heuristic-fallback"
+        return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key", _summarize_llm_error(exc)
+    try:
+        return _extract_candidates_llm(text, max_pages), "llm", "Together extraction succeeded"
+    except Exception as exc:
+        reason = _summarize_llm_error(exc)
+        logger.info("icarus.wiki: LLM extraction fell back (%s)", reason)
+        return _extract_candidates_heuristic(text, max_pages), "heuristic-fallback", reason
+
+
+def llm_status(live: bool = True) -> dict:
+    model = os.environ.get("WIKI_LLM_MODEL", LLM_MODEL_DEFAULT)
+    enabled = os.environ.get("WIKI_LLM_EXTRACTION", "1") != "0"
+    key_present = bool(_together_key_for_wiki())
+    status = {
+        "enabled": enabled,
+        "model": model,
+        "endpoint": LLM_ENDPOINT,
+        "key_present": key_present,
+        "live_check": bool(live),
+    }
+    if not enabled:
+        return {**status, "status": "disabled", "reason": "WIKI_LLM_EXTRACTION=0"}
+    if not key_present:
+        return {**status, "status": "missing_key", "reason": "TOGETHER_API_KEY not set"}
+    if not live:
+        return {**status, "status": "configured", "reason": "Live check skipped"}
+
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Return strict JSON only."},
+            {"role": "user", "content": '{"ok": true}'},
+        ],
+        "max_tokens": 32,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        LLM_ENDPOINT,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {_together_key_for_wiki()}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
+            body = json.loads(resp.read())
+        return {
+            **status,
+            "status": "ok",
+            "http_status": getattr(resp, "status", 200),
+            "response_id": body.get("id", ""),
+            "reason": "Together endpoint accepted request",
+        }
+    except Exception as exc:
+        return {
+            **status,
+            "status": "error",
+            "reason": _summarize_llm_error(exc),
+        }
 
 
 # ── Page I/O ─────────────────────────────────────────────────────────────
@@ -485,7 +568,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
     title_guess = _derive_title(text, fallback=src.stem)
     summary = _derive_summary(text)
 
-    candidates, extraction_mode = _extract_candidates(text, max_pages=4)
+    candidates, extraction_mode, extraction_reason = _extract_candidates(text, max_pages=4)
     see_also = "\n".join(
         f"- [[{('entities' if c['kind'] == 'entity' else 'topics')}/{c['slug']}]]"
         for c in candidates
@@ -506,7 +589,10 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         source_link=source_link,
         body_append=src_body,
         generated_block_key=f"source:{rel_source}",
-        extra_frontmatter={"extraction_mode": extraction_mode},
+        extra_frontmatter={
+            "extraction_mode": extraction_mode,
+            "extraction_reason": extraction_reason,
+        },
     )
     created: list[str] = []
     updated: list[str] = []
@@ -545,6 +631,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         "pages_updated": updated,
         "links": page_links,
         "extraction_mode": extraction_mode,
+        "extraction_reason": extraction_reason,
     }
 
 
