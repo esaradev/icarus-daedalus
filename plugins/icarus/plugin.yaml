@@ -1,5 +1,5 @@
 name: icarus
-version: 0.5.0
+version: 0.6.0
 description: Self-memory, replacement models, and a persistent markdown wiki for Hermes agents. Remember your work. Train your replacement. Grow a knowledge base.
 author: esaradev
 provides_tools:
@@ -23,6 +23,7 @@ provides_tools:
   - wiki_ingest
   - wiki_query
   - wiki_lint
+  - wiki_ask
   - wiki_llm_status
 provides_hooks:
   - on_session_start

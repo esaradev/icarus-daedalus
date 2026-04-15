@@ -433,6 +433,168 @@ def llm_status(live: bool = True) -> dict:
         }
 
 
+# ── Ask (v1.2) ───────────────────────────────────────────────────────────
+# Ground an LLM answer in the wiki. v1 retrieval is keyword overlap, which
+# is fine for a personal wiki on the order of 10-500 pages. Swap for
+# embeddings when corpus size justifies the cost.
+
+_ASK_SYSTEM = (
+    "You answer questions strictly from the provided wiki pages. Cite the "
+    "pages you used with their [[path]] wikilinks inline in your answer. "
+    "If the pages don't contain the answer, say so plainly — do not make "
+    "up facts. Be concise."
+)
+
+
+def _tokenize(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]{3,}", text.lower())}
+
+
+def _rank_pages(question: str, pages: list[dict], limit: int = 6) -> list[dict]:
+    q_tokens = _tokenize(question)
+    if not q_tokens:
+        return []
+    scored: list[tuple[int, dict]] = []
+    for p in pages:
+        haystack = " ".join(filter(None, [
+            p.get("title", ""), p.get("summary", ""), p.get("body", ""),
+        ]))
+        overlap = len(q_tokens & _tokenize(haystack))
+        if overlap:
+            scored.append((overlap, p))
+    scored.sort(key=lambda s: s[0], reverse=True)
+    return [p for _, p in scored[:limit]]
+
+
+def _load_wiki_pages(fabric_dir: Path) -> list[dict]:
+    wiki = _wiki_root(fabric_dir)
+    if not wiki.exists():
+        return []
+    out: list[dict] = []
+    for sub in WIKI_SUBDIRS:
+        d = wiki / sub
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.md")):
+            text = f.read_text("utf-8", errors="replace")
+            fm, body = _parse_frontmatter(text)
+            out.append({
+                "path": f"{sub}/{f.stem}",
+                "title": fm.get("title", f.stem),
+                "summary": fm.get("summary", ""),
+                "body": body,
+            })
+    return out
+
+
+def ask(question: str, fabric_dir: Path, max_pages: int = 6) -> dict:
+    """Answer a question using the wiki as the sole source.
+
+    Returns {question, answer, citations, pages_considered, mode, reason}.
+    mode is "llm" on success or "error" with a reason describing the cause.
+    """
+    q = (question or "").strip()
+    if not q:
+        return {"error": "empty question"}
+
+    pages = _load_wiki_pages(Path(fabric_dir))
+    if not pages:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [],
+            "mode": "empty",
+            "reason": "No wiki pages found. Ingest a source first.",
+        }
+
+    top = _rank_pages(q, pages, max_pages)
+    if not top:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [],
+            "mode": "no_match",
+            "reason": "No pages mention any keywords from your question.",
+        }
+
+    key = _together_key_for_wiki()
+    if not key:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [p["path"] for p in top],
+            "mode": "no_key",
+            "reason": "TOGETHER_API_KEY not set — retrieved pages listed below.",
+        }
+
+    context = "\n\n".join(
+        f"=== [[{p['path']}]] ===\n"
+        f"Title: {p['title']}\n"
+        f"Summary: {p['summary']}\n\n"
+        f"{p['body'][:2000]}"
+        for p in top
+    )
+
+    prompt = (
+        f"Wiki pages (use only these):\n\n{context}\n\n"
+        f"Question: {q}\n\n"
+        f"Answer using only the pages above. Cite each page you use with its "
+        f"[[path]] wikilink inline."
+    )
+
+    model = os.environ.get("WIKI_LLM_MODEL", LLM_MODEL_DEFAULT)
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _ASK_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 700,
+        "temperature": 0.2,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        LLM_ENDPOINT,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S)
+        body = json.loads(resp.read())
+        answer = body["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [p["path"] for p in top],
+            "mode": "error",
+            "reason": _summarize_llm_error(exc),
+        }
+
+    cited = [p for p in re.findall(r"\[\[([^\]]+)\]\]", answer)
+             if p in {x["path"] for x in top}]
+    # dedupe preserving order
+    seen: set[str] = set()
+    citations = [c for c in cited if not (c in seen or seen.add(c))]
+
+    return {
+        "question": q,
+        "answer": answer,
+        "citations": citations,
+        "pages_considered": [p["path"] for p in top],
+        "mode": "llm",
+        "reason": f"Answered from {len(citations)} cited page(s).",
+    }
+
+
 # ── Page I/O ─────────────────────────────────────────────────────────────
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)

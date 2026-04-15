@@ -485,6 +485,31 @@ WIKI_LINT = {
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
+WIKI_ASK = {
+    "name": "wiki_ask",
+    "description": (
+        "Answer a question using only the Icarus wiki. Retrieves the most "
+        "relevant pages by keyword overlap, then asks the LLM to answer "
+        "citing them with [[wikilinks]]. Requires TOGETHER_API_KEY. When "
+        "the key is missing, returns the retrieved pages without a synthesized "
+        "answer so the caller can still show grounding."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": "Natural-language question to answer from the wiki",
+            },
+            "max_pages": {
+                "type": "integer",
+                "description": "Max pages to retrieve (default 6)",
+            },
+        },
+        "required": ["question"],
+    },
+}
+
 WIKI_LLM_STATUS = {
     "name": "wiki_llm_status",
     "description": (

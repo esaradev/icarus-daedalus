@@ -276,6 +276,17 @@ def wiki_lint(args: dict, **kwargs) -> str:
         return _json({"error": str(e)})
 
 
+def wiki_ask(args: dict, **kwargs) -> str:
+    question = args.get("question", "").strip()
+    if not question:
+        return _json({"error": "question is required"})
+    try:
+        from . import wiki
+        return _json(wiki.ask(question, state.FABRIC_DIR, max_pages=args.get("max_pages", 6)))
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
 def wiki_llm_status(args: dict, **kwargs) -> str:
     try:
         from . import wiki
