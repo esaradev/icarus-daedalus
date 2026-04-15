@@ -77,6 +77,16 @@ export function Icarus() {
 
   return (
     <div className="space-y-4">
+      <div className="bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+        <div className="text-[11px] text-warning font-medium">
+          This view is now part of the Hermes dashboard.
+        </div>
+        <div className="text-[11px] text-text-2 mt-0.5">
+          The canonical Icarus wiki view lives in the Hermes fork at{" "}
+          <code className="font-mono">esaradev/hermes-agent</code> → <code className="font-mono">hermes dashboard</code> → Icarus.
+          This page is kept for existing users and will stop receiving new features.
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Pages" value={pages.length} />
         <Stat label="Sources ingested" value={sourceCount} />
