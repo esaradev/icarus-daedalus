@@ -37,9 +37,28 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-LLM_MODEL_DEFAULT = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
-LLM_ENDPOINT = "https://api.together.xyz/v1/chat/completions"
 LLM_TIMEOUT_S = 30
+
+# Provider registry, picked in order. First one with an available key wins.
+# All providers use the OpenAI chat/completions wire format.
+_PROVIDERS = [
+    ("openrouter", "OPENROUTER_API_KEY",
+     "https://openrouter.ai/api/v1/chat/completions",
+     "anthropic/claude-haiku-4-5"),
+    ("anthropic_openai", "ANTHROPIC_API_KEY",
+     "https://api.anthropic.com/v1/chat/completions",
+     "claude-haiku-4-5"),
+    ("openai", "OPENAI_API_KEY",
+     "https://api.openai.com/v1/chat/completions",
+     "gpt-4o-mini"),
+    ("together", "TOGETHER_API_KEY",
+     "https://api.together.xyz/v1/chat/completions",
+     "meta-llama/Llama-3.1-8B-Instruct-Turbo"),
+]
+
+# Back-compat aliases for code still importing these.
+LLM_MODEL_DEFAULT = _PROVIDERS[0][3]
+LLM_ENDPOINT = _PROVIDERS[0][2]
 
 WIKI_SUBDIRS = ("entities", "topics", "sources", "indexes", "notes")
 
@@ -251,21 +270,81 @@ Source:
 >>>"""
 
 
-def _together_key_for_wiki() -> str:
-    key = os.environ.get("TOGETHER_API_KEY", "").strip()
-    if key:
-        return key
-
-    # Prefer the plugin package import path Hermes uses, but allow standalone
-    # imports of wiki.py during local debugging.
+def _load_env_file_keys() -> dict[str, str]:
+    """Read $HERMES_HOME/.env so we can pick up keys that were set there
+    rather than exported in the shell that launched the dashboard."""
+    out: dict[str, str] = {}
+    hh = os.environ.get("HERMES_HOME", "")
+    if not hh:
+        return out
+    env_path = Path(hh) / ".env"
+    if not env_path.exists():
+        return out
     try:
-        from . import state  # type: ignore
-    except ImportError:
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return out
+
+
+def _pick_llm_provider() -> Optional[tuple[str, str, str, str]]:
+    """Return (key, endpoint, model, name) for the first configured provider,
+    or None if nothing is set. Respects WIKI_LLM_MODEL as an override."""
+    env_file = _load_env_file_keys()
+    model_override = os.environ.get("WIKI_LLM_MODEL", "").strip()
+    for name, env_var, endpoint, default_model in _PROVIDERS:
+        key = os.environ.get(env_var, "").strip() or env_file.get(env_var, "").strip()
+        if key:
+            return key, endpoint, model_override or default_model, name
+    return None
+
+
+def _together_key_for_wiki() -> str:
+    """Back-compat shim for tests. Returns the first configured provider key."""
+    picked = _pick_llm_provider()
+    return picked[0] if picked else ""
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.IGNORECASE)
+
+
+def _loose_parse_json_object(text: str) -> dict:
+    """Parse a JSON object from an LLM response that may include prose or
+    markdown fences. Falls back to the first {...} span in the text."""
+    text = (text or "").strip()
+    try:
+        out = json.loads(text)
+        if isinstance(out, dict):
+            return out
+    except Exception:
+        pass
+    m = _JSON_FENCE_RE.search(text)
+    if m:
         try:
-            import state  # type: ignore
-        except ImportError:
-            return ""
-    return state._together_key()
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+    # last resort: first balanced {...}
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        for i in range(start, len(text)):
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except Exception:
+                        break
+    raise ValueError("LLM response did not contain a parseable JSON object")
 
 
 def _summarize_llm_error(exc: Exception) -> str:
@@ -285,16 +364,16 @@ def _summarize_llm_error(exc: Exception) -> str:
 
 
 def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
-    """Call Together chat to get entity/topic candidates as JSON.
+    """Call the configured LLM provider to get entity/topic candidates as JSON.
 
     Raises on any failure (no-key, network, malformed JSON, empty result).
     Caller is responsible for fallback.
     """
-    key = _together_key_for_wiki()
-    if not key:
-        raise RuntimeError("TOGETHER_API_KEY not set")
+    picked = _pick_llm_provider()
+    if not picked:
+        raise RuntimeError("no LLM provider key configured")
+    key, endpoint, model, _ = picked
 
-    model = os.environ.get("WIKI_LLM_MODEL", LLM_MODEL_DEFAULT)
     # bound the source we send; most sources are small, but cap to keep latency sane
     trimmed = text if len(text) <= 8000 else text[:8000]
     prompt = _LLM_USER_TEMPLATE.format(max_pages=max_pages, source=trimmed)
@@ -307,11 +386,10 @@ def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
         ],
         "max_tokens": 512,
         "temperature": 0.2,
-        "response_format": {"type": "json_object"},
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        LLM_ENDPOINT,
+        endpoint,
         data=payload,
         headers={
             "Authorization": f"Bearer {key}",
@@ -322,7 +400,7 @@ def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
     resp = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S)
     body = json.loads(resp.read())
     content = body["choices"][0]["message"]["content"]
-    parsed = json.loads(content)
+    parsed = _loose_parse_json_object(content)
     raw_items = parsed.get("candidates") if isinstance(parsed, dict) else None
     if not isinstance(raw_items, list):
         raise ValueError("LLM response missing 'candidates' list")
@@ -365,13 +443,15 @@ def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str,
     """
     if os.environ.get("WIKI_LLM_EXTRACTION", "1") == "0":
         return _extract_candidates_heuristic(text, max_pages), "heuristic", "WIKI_LLM_EXTRACTION=0"
+    picked = _pick_llm_provider()
+    if not picked:
+        return (
+            _extract_candidates_heuristic(text, max_pages),
+            "heuristic-no-key",
+            "No LLM provider key found (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY)",
+        )
     try:
-        if not _together_key_for_wiki():
-            return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key", "TOGETHER_API_KEY not set"
-    except Exception as exc:
-        return _extract_candidates_heuristic(text, max_pages), "heuristic-no-key", _summarize_llm_error(exc)
-    try:
-        return _extract_candidates_llm(text, max_pages), "llm", "Together extraction succeeded"
+        return _extract_candidates_llm(text, max_pages), "llm", f"{picked[3]} extraction succeeded"
     except Exception as exc:
         reason = _summarize_llm_error(exc)
         logger.info("icarus.wiki: LLM extraction fell back (%s)", reason)
@@ -379,38 +459,42 @@ def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str,
 
 
 def llm_status(live: bool = True) -> dict:
-    model = os.environ.get("WIKI_LLM_MODEL", LLM_MODEL_DEFAULT)
     enabled = os.environ.get("WIKI_LLM_EXTRACTION", "1") != "0"
-    key_present = bool(_together_key_for_wiki())
+    picked = _pick_llm_provider()
     status = {
         "enabled": enabled,
-        "model": model,
-        "endpoint": LLM_ENDPOINT,
-        "key_present": key_present,
+        "provider": picked[3] if picked else None,
+        "model": picked[2] if picked else None,
+        "endpoint": picked[1] if picked else None,
+        "key_present": picked is not None,
         "live_check": bool(live),
     }
     if not enabled:
         return {**status, "status": "disabled", "reason": "WIKI_LLM_EXTRACTION=0"}
-    if not key_present:
-        return {**status, "status": "missing_key", "reason": "TOGETHER_API_KEY not set"}
+    if not picked:
+        return {
+            **status,
+            "status": "missing_key",
+            "reason": "No LLM provider key set (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY)",
+        }
     if not live:
         return {**status, "status": "configured", "reason": "Live check skipped"}
 
+    key, endpoint, model, _ = picked
     payload = json.dumps({
         "model": model,
         "messages": [
-            {"role": "system", "content": "Return strict JSON only."},
-            {"role": "user", "content": '{"ok": true}'},
+            {"role": "system", "content": "Reply with the single word ok."},
+            {"role": "user", "content": "ping"},
         ],
-        "max_tokens": 32,
+        "max_tokens": 8,
         "temperature": 0,
-        "response_format": {"type": "json_object"},
     }).encode("utf-8")
     req = urllib.request.Request(
-        LLM_ENDPOINT,
+        endpoint,
         data=payload,
         headers={
-            "Authorization": f"Bearer {_together_key_for_wiki()}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         },
         method="POST",
@@ -519,16 +603,17 @@ def ask(question: str, fabric_dir: Path, max_pages: int = 6) -> dict:
             "reason": "No pages mention any keywords from your question.",
         }
 
-    key = _together_key_for_wiki()
-    if not key:
+    picked = _pick_llm_provider()
+    if not picked:
         return {
             "question": q,
             "answer": "",
             "citations": [],
             "pages_considered": [p["path"] for p in top],
             "mode": "no_key",
-            "reason": "TOGETHER_API_KEY not set — retrieved pages listed below.",
+            "reason": "No LLM provider key found — retrieved pages listed below.",
         }
+    key, endpoint, model, _ = picked
 
     context = "\n\n".join(
         f"=== [[{p['path']}]] ===\n"
@@ -545,7 +630,6 @@ def ask(question: str, fabric_dir: Path, max_pages: int = 6) -> dict:
         f"[[path]] wikilink inline."
     )
 
-    model = os.environ.get("WIKI_LLM_MODEL", LLM_MODEL_DEFAULT)
     payload = json.dumps({
         "model": model,
         "messages": [
@@ -557,7 +641,7 @@ def ask(question: str, fabric_dir: Path, max_pages: int = 6) -> dict:
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        LLM_ENDPOINT,
+        endpoint,
         data=payload,
         headers={
             "Authorization": f"Bearer {key}",
