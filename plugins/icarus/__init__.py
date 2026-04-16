@@ -1,5 +1,5 @@
 """
-Icarus v3 — Self-memory and replacement models for Hermes agents.
+Icarus v4 — Self-memory, persistent wiki, and replacement models for Hermes agents.
 
 Remember your work. Train your replacement.
 
@@ -24,6 +24,11 @@ Replacement-model tools:
 Daily driver:
   fabric_brief         — operational brief: pending, recent work, suggested action
   fabric_telemetry     — retrieval/usage stats: what gets recalled, what gets used
+  fabric_wiki_init     — initialize the persistent Obsidian-friendly wiki layer
+  fabric_wiki_get_page — read a synthesized wiki page by title
+  fabric_wiki_upsert_page — create or update a synthesized wiki page
+  fabric_wiki_search   — search across wiki pages
+  fabric_wiki_overview — inspect wiki shape and recent changes
 
 Hooks (automatic):
   on_session_start  — loads SOUL, pending handoffs, recent context
@@ -79,6 +84,16 @@ def register(ctx):
                       schema=schemas.FABRIC_INIT_OBSIDIAN, handler=tools.fabric_init_obsidian)
     ctx.register_tool(name="fabric_report", toolset="fabric",
                       schema=schemas.FABRIC_REPORT, handler=tools.fabric_report)
+    ctx.register_tool(name="fabric_wiki_init", toolset="fabric",
+                      schema=schemas.FABRIC_WIKI_INIT, handler=tools.fabric_wiki_init)
+    ctx.register_tool(name="fabric_wiki_get_page", toolset="fabric",
+                      schema=schemas.FABRIC_WIKI_GET_PAGE, handler=tools.fabric_wiki_get_page)
+    ctx.register_tool(name="fabric_wiki_upsert_page", toolset="fabric",
+                      schema=schemas.FABRIC_WIKI_UPSERT_PAGE, handler=tools.fabric_wiki_upsert_page)
+    ctx.register_tool(name="fabric_wiki_search", toolset="fabric",
+                      schema=schemas.FABRIC_WIKI_SEARCH, handler=tools.fabric_wiki_search)
+    ctx.register_tool(name="fabric_wiki_overview", toolset="fabric",
+                      schema=schemas.FABRIC_WIKI_OVERVIEW, handler=tools.fabric_wiki_overview)
 
     # hooks
     ctx.register_hook("on_session_start", hooks.on_session_start)
@@ -86,4 +101,4 @@ def register(ctx):
     ctx.register_hook("post_llm_call", hooks.post_llm_call)
     ctx.register_hook("on_session_end", hooks.on_session_end)
 
-    logger.info("icarus v3 registered (16 tools, 4 hooks)")
+    logger.info("icarus v4 registered (21 tools, 4 hooks)")

@@ -140,9 +140,17 @@ def init_obsidian(fabric_dir: Path) -> dict:
     if created:
         logger.info("icarus: obsidian init created %s", created)
 
-    return {
+    result = {
         "status": "initialized" if created else "already_initialized",
         "fabric_dir": str(fabric_dir),
         "vault_dir": str(vault_dir),
         "created": created,
     }
+    try:
+        from . import wiki
+
+        result["wiki"] = wiki.init_wiki()
+    except Exception as exc:
+        logger.debug("icarus: wiki init during obsidian setup failed: %s", exc)
+
+    return result

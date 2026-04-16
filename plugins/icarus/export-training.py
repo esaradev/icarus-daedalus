@@ -16,7 +16,13 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from .frontmatter import parse_markdown_entry
+except ImportError:  # standalone execution after copy into plugin dir
+    from frontmatter import parse_markdown_entry
+
 FABRIC_DIR = Path(os.environ.get("FABRIC_DIR", Path.home() / "fabric"))
+_INVALID_ENTRY_COUNT = 0
 
 
 def _truthy(value) -> bool:
@@ -78,45 +84,22 @@ def _strip_generated_obsidian_sections(body: str) -> str:
 
 def parse_entry(filepath):
     """Parse a fabric markdown entry into a dict."""
-    text = filepath.read_text(encoding="utf-8")
-    if not text.startswith("---"):
+    global _INVALID_ENTRY_COUNT
+    meta = parse_markdown_entry(
+        filepath,
+        body_transform=_strip_generated_obsidian_sections,
+    )
+    if meta is None:
+        _INVALID_ENTRY_COUNT += 1
+        print(f"warning: skipping invalid frontmatter in {filepath}", file=sys.stderr)
         return None
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        return None
-    meta = {}
-    try:
-        import yaml as _yaml
-        meta = _yaml.safe_load(parts[1]) or {}
-    except Exception:
-        lines = parts[1].strip().split("\n")
-        current_key = None
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("- ") and current_key:
-                if not isinstance(meta.get(current_key), list):
-                    meta[current_key] = []
-                meta[current_key].append(stripped[2:].strip().strip("\"'"))
-            elif ": " in stripped and not stripped.startswith("-"):
-                k, v = stripped.split(": ", 1)
-                k = k.strip()
-                current_key = k
-                if v.startswith("[") and v.endswith("]"):
-                    meta[k] = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
-                elif v.strip():
-                    meta[k] = v.strip()
-                else:
-                    meta[k] = []
-            elif stripped.endswith(":") and not stripped.startswith("-"):
-                current_key = stripped[:-1].strip()
-                meta[current_key] = []
-    meta["body"] = _strip_generated_obsidian_sections(parts[2])
-    meta["file"] = filepath.name
     return meta
 
 
 def scan_all():
     """Scan all fabric entries including cold."""
+    global _INVALID_ENTRY_COUNT
+    _INVALID_ENTRY_COUNT = 0
     entries = []
     for d in [FABRIC_DIR, FABRIC_DIR / "cold"]:
         if not d.exists():
@@ -421,6 +404,8 @@ def main():
     if not all_entries:
         print("no fabric entries found")
         sys.exit(0)
+    if _INVALID_ENTRY_COUNT:
+        print(f"  skipped invalid entries: {_INVALID_ENTRY_COUNT}")
 
     # filter by mode
     excluded = 0

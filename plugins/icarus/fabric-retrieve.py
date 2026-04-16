@@ -16,6 +16,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from .fabric_index import load_runtime_entries, read_entry_text
+    from .frontmatter import parse_markdown_entry
+except ImportError:  # standalone execution after copy into plugin dir
+    from fabric_index import load_runtime_entries, read_entry_text
+    from frontmatter import parse_markdown_entry
+
 FABRIC_DIR = Path(os.environ.get("FABRIC_DIR", Path.home() / "fabric"))
 
 
@@ -49,40 +56,11 @@ HANDOFF_WORDS = {"handoff", "review", "reviewer", "pickup", "pending", "relay",
 
 
 def parse_entry(filepath):
-    text = filepath.read_text(encoding="utf-8")
-    if not text.startswith("---"):
+    meta = parse_markdown_entry(filepath, body_transform=_strip_generated_obsidian_sections, include_full=True)
+    if meta is None:
         return None
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        return None
-    meta = {}
-    try:
-        import yaml
-        meta = yaml.safe_load(parts[1]) or {}
-    except Exception:
-        current_key = None
-        for line in parts[1].strip().split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("- ") and current_key:
-                if not isinstance(meta.get(current_key), list):
-                    meta[current_key] = []
-                meta[current_key].append(stripped[2:].strip().strip("\"'"))
-            elif ": " in stripped and not stripped.startswith("-"):
-                k, v = stripped.split(": ", 1)
-                k = k.strip()
-                current_key = k
-                if v.startswith("[") and v.endswith("]"):
-                    meta[k] = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
-                elif v.strip():
-                    meta[k] = v.strip()
-                else:
-                    meta[k] = []
-            elif stripped.endswith(":") and not stripped.startswith("-"):
-                current_key = stripped[:-1].strip()
-                meta[current_key] = []
-    meta["_body"] = _strip_generated_obsidian_sections(parts[2])
-    meta["_file"] = filepath.name
-    meta["_full"] = text
+    meta["_body"] = meta.pop("body", "")
+    meta["_file"] = meta.pop("file", filepath.name)
     return meta
 
 
@@ -280,15 +258,12 @@ def retrieve(query, max_results=5, max_tokens=2000, agent=None, project=None):
     if not FABRIC_DIR.exists():
         return []
 
-    # Scan all entries
     entries = []
-    for d in [FABRIC_DIR, FABRIC_DIR / "cold"]:
-        if not d.exists():
-            continue
-        for f in d.glob("*.md"):
-            e = parse_entry(f)
-            if e:
-                entries.append(e)
+    for record in load_runtime_entries(FABRIC_DIR):
+        e = dict(record)
+        e["_body"] = e.get("body", "")
+        e["_file"] = e.get("file", "")
+        entries.append(e)
 
     if not entries:
         return []
@@ -346,6 +321,9 @@ def retrieve(query, max_results=5, max_tokens=2000, agent=None, project=None):
     result = []
     for score, e in final:
         content = e.get("_full", "")
+        if not content:
+            content = read_entry_text(FABRIC_DIR, e)
+            e["_full"] = content
         tokens = len(content) // 4
         if tokens > budget:
             continue  # skip oversized entries, try next

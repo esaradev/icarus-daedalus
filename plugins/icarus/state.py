@@ -1,5 +1,6 @@
 """Shared state: fabric I/O, retriever, training helpers, model registry."""
 
+import fcntl
 import json
 import logging
 import os
@@ -10,8 +11,12 @@ import subprocess
 import tempfile
 import urllib.request
 import urllib.error
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .fabric_index import load_runtime_entries, refresh_runtime_index
+from .frontmatter import parse_markdown_entry
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +72,7 @@ def _load_registry():
 
 def _save_registry(registry):
     try:
-        _REGISTRY_FILE.write_text(json.dumps(registry, indent=2), "utf-8")
+        _atomic_write_text(_REGISTRY_FILE, json.dumps(registry, indent=2))
     except Exception as exc:
         logger.warning("icarus: failed to save model registry: %s", exc)
 
@@ -282,23 +287,77 @@ def _yaml_scalar(value):
     """Encode a scalar as a YAML-safe quoted string."""
     return json.dumps(str(value))
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(content, "utf-8")
+    tmp.replace(path)
 
-def _parse_frontmatter_scalar(text, key):
-    """Read a scalar frontmatter value and normalize quoted YAML strings."""
-    m = re.search(rf"^{key}: (.+)$", text, re.MULTILINE)
-    if not m:
+
+@contextmanager
+def _fabric_lock():
+    FABRIC_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = FABRIC_DIR / ".lock"
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _runtime_entries():
+    return load_runtime_entries(FABRIC_DIR, logger=logger)
+
+
+def _normalize_ref_part(value: str) -> str:
+    value = str(value).strip()
+    if not value:
         return ""
-    raw = m.group(1).strip()
     try:
         import yaml as _yaml
-        value = _yaml.safe_load(raw)
+
+        parsed = _yaml.safe_load(value)
+        if parsed is None:
+            return ""
+        if isinstance(parsed, str):
+            return parsed.strip()
     except Exception:
-        value = raw
-    if value is None:
+        pass
+    return value.strip("\"'")
+
+
+def _normalize_obsidian_title(summary: str) -> str:
+    """Turn a summary into a clean human note title for Obsidian."""
+    title = " ".join(str(summary).strip().split())
+    title = re.sub(r"^(notes?\s+on|thoughts?\s+on|misc(?:ellaneous)?|untitled|random)\s+", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"[\\/:\*\?\"<>\|#\^\[\]]+", " ", title)
+    title = re.sub(r"\s+", " ", title).strip(" .-_")
+    if not title:
         return ""
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value)
-    return str(value)
+
+    small_words = {"a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "vs"}
+    words = []
+    for index, word in enumerate(title.split()):
+        lower = word.lower()
+        if word.isupper() and len(word) > 1:
+            words.append(word)
+        elif index > 0 and lower in small_words:
+            words.append(lower)
+        else:
+            words.append(lower[:1].upper() + lower[1:])
+
+    return " ".join(words)[:80].rstrip(" -")
+
+
+def _obsidian_filename(agent: str, entry_type: str, summary: str, suffix: str, ts: str) -> str:
+    title = _normalize_obsidian_title(summary)
+    if not title:
+        return f"{agent}-{entry_type}-{ts}-{suffix}.md"
+    safe = re.sub(r'[\\/:\*\?\"<>\|#\^]+', "", title).strip()
+    if not safe:
+        return f"{agent}-{entry_type}-{ts}-{suffix}.md"
+    return f"{safe}.md"
 
 def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli",
                 status="", outcome="", review_of="", revises="", customer_id="",
@@ -311,9 +370,12 @@ def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli
     ts_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     agent = AGENT_NAME or "agent"
     suffix = secrets.token_hex(2)
+    summary = _normalize_obsidian_title(summary)
     # derive a short slug from the summary for human-readable filenames
     slug = re.sub(r"[^a-z0-9]+", "-", summary.lower().strip())[:40].strip("-")
-    if slug:
+    if os.environ.get("ICARUS_OBSIDIAN"):
+        filename = _obsidian_filename(agent, entry_type, summary, suffix, ts)
+    elif slug:
         filename = f"{agent}-{entry_type}-{slug}-{suffix}.md"
     else:
         filename = f"{agent}-{entry_type}-{ts}-{suffix}.md"
@@ -363,7 +425,9 @@ def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli
     lines.extend(["---", "", content])
 
     path = FABRIC_DIR / filename
-    path.write_text("\n".join(lines), "utf-8")
+    with _fabric_lock():
+        path.write_text("\n".join(lines), "utf-8")
+        refresh_runtime_index(FABRIC_DIR, changed_paths=[path], logger=logger)
     logger.info("icarus: wrote %s", filename)
 
     # opt-in obsidian formatting
@@ -380,11 +444,8 @@ def write_entry(entry_type, content, summary, tier="hot", tags="", platform="cli
 
 def read_recent(agent="", limit=5):
     """Read recent hot entries."""
-    if not FABRIC_DIR.exists():
-        return []
     out = []
-    for f in sorted(FABRIC_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-        head = _parse_head(f)
+    for head in _runtime_entries():
         if head.get("tier") != "hot":
             continue
         if agent and head.get("agent") != agent:
@@ -401,11 +462,8 @@ def read_recent(agent="", limit=5):
 
 def read_cross_agent(limit=3):
     """Read recent entries from OTHER agents."""
-    if not FABRIC_DIR.exists():
-        return []
     out = []
-    for f in sorted(FABRIC_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-        head = _parse_head(f)
+    for head in _runtime_entries():
         if AGENT_NAME and head.get("agent") == AGENT_NAME:
             continue
         if head.get("type") not in ("review", "dialogue", "decision"):
@@ -421,16 +479,18 @@ def read_cross_agent(limit=3):
 
 def _parse_head(filepath, max_bytes=800):
     """Parse frontmatter fields from a fabric entry header."""
-    text = filepath.read_text("utf-8")[:max_bytes]
-    fields = {}
-    for key in ("agent", "type", "tier", "status", "summary", "timestamp",
-                "review_of", "revises", "customer_id", "assigned_to", "id",
-                "project_id", "session_id",
-                "outcome", "training_value", "verified", "evidence",
-                "source_tool", "artifact_paths"):
-        value = _parse_frontmatter_scalar(text, key)
-        if value != "":
-            fields[key] = value
+    entry = parse_markdown_entry(filepath, logger=logger)
+    if entry is None:
+        return {}
+    fields = {
+        key: entry[key]
+        for key in ("agent", "type", "tier", "status", "summary", "timestamp",
+                    "review_of", "revises", "customer_id", "assigned_to", "id",
+                    "project_id", "session_id", "outcome", "training_value",
+                    "verified", "evidence", "source_tool", "artifact_paths",
+                    "platform", "refs", "tags", "cycle")
+        if key in entry and entry[key] not in ("", None)
+    }
     fields["file"] = filepath.name
     return fields
 
@@ -440,18 +500,14 @@ def has_entry_ref(ref):
     if not ref or ":" not in ref or not FABRIC_DIR.exists():
         return False
     agent, entry_id = ref.split(":", 1)
-    agent = agent.strip()
-    entry_id = entry_id.strip()
+    agent = _normalize_ref_part(agent)
+    entry_id = _normalize_ref_part(entry_id)
     if not agent or not entry_id:
         return False
 
-    for d in (FABRIC_DIR, FABRIC_DIR / "cold"):
-        if not d.exists():
-            continue
-        for f in d.glob("*.md"):
-            h = _parse_head(f)
-            if h.get("agent", "").strip() == agent and h.get("id", "").strip() == entry_id:
-                return True
+    for entry in _runtime_entries():
+        if entry.get("agent", "").strip() == agent and str(entry.get("id", "")).strip() == entry_id:
+            return True
     return False
 
 
@@ -460,38 +516,34 @@ def curate_entry(entry_id, training_value):
     if training_value not in ("high", "normal", "low"):
         return {"error": f"training_value must be high/normal/low, got '{training_value}'"}
 
-    for d in (FABRIC_DIR, FABRIC_DIR / "cold"):
-        if not d.exists():
+    for entry in _runtime_entries():
+        if str(entry.get("id", "")).strip() != entry_id:
             continue
-        for f in d.glob("*.md"):
-            head = f.read_text("utf-8")[:400]
-            m = re.search(r"^id: (.+)$", head, re.MULTILINE)
-            if not m or m.group(1).strip() != entry_id:
-                continue
-
+        rel_path = entry.get("path", "")
+        if not rel_path:
+            continue
+        f = FABRIC_DIR / rel_path
+        with _fabric_lock():
             text = f.read_text("utf-8")
             if re.search(r"^training_value: .+$", text, re.MULTILINE):
                 text = re.sub(r"^training_value: .+$", f"training_value: {training_value}", text, count=1, flags=re.MULTILINE)
             else:
                 text = text.replace("\n---\n", f"\ntraining_value: {training_value}\n---\n", 1)
-            f.write_text(text, "utf-8")
-            return {"status": "updated", "file": f.name, "training_value": training_value}
+            _atomic_write_text(f, text)
+            refresh_runtime_index(FABRIC_DIR, changed_paths=[f], logger=logger)
+        return {"status": "updated", "file": f.name, "training_value": training_value}
 
     return {"error": f"entry {entry_id} not found"}
 
 
 def read_pending(customer_id=None):
     """Find entries needing this agent's attention."""
-    if not FABRIC_DIR.exists():
-        return [], [], []
-
     agent = AGENT_NAME
     open_tasks = []
     reviews = []
     open_tickets = []
 
-    for f in sorted(FABRIC_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-        h = _parse_head(f)
+    for h in _runtime_entries():
         entry_agent = h.get("agent", "")
         assigned_to = h.get("assigned_to", "").strip()
 
@@ -523,24 +575,24 @@ def read_pending(customer_id=None):
 
 def search_entries(query, limit=10):
     """Keyword search across fabric."""
-    if not FABRIC_DIR.exists():
-        return []
     results = []
     q = query.lower()
-    for d in [FABRIC_DIR, FABRIC_DIR / "cold"]:
-        if not d.exists():
+    for entry in _runtime_entries():
+        body = str(entry.get("body", ""))
+        if q not in body.lower() and q not in str(entry.get("summary", "")).lower():
             continue
-        for f in sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-            text = f.read_text("utf-8")
-            if q not in text.lower():
-                continue
-            head = _parse_head(f)
-            summary = head.get("summary", "")
-            agent = head.get("agent", "")
-            matches = [line.strip() for line in text.split("\n") if q in line.lower()][:3]
-            results.append({"file": f.name, "agent": agent, "summary": summary, "matches": matches})
-            if len(results) >= limit:
-                return results
+        text = ""
+        if entry.get("path"):
+            text = (FABRIC_DIR / entry["path"]).read_text("utf-8")
+        matches = [line.strip() for line in text.split("\n") if q in line.lower()][:3]
+        results.append({
+            "file": entry.get("file", ""),
+            "agent": entry.get("agent", ""),
+            "summary": entry.get("summary", ""),
+            "matches": matches,
+        })
+        if len(results) >= limit:
+            return results
     return results
 
 
@@ -772,22 +824,23 @@ def start_training(model=None, suffix=None, epochs=3, batch_size=None, learning_
     _save_job_id(job_id)
 
     # register as pending in model registry
-    registry = _load_registry()
-    registry["models"].append({
-        "job_id": job_id,
-        "base_model": ft_model,
-        "output_model": None,
-        "suffix": ft_suffix,
-        "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "pair_count": export["pairs"],
-        "estimated_tokens": export.get("estimated_tokens", 0),
-        "pair_types": export.get("pair_types", {}),
-        "export_mode": export_mode,
-        "status": "pending",
-        "eval_scores": None,
-        "active": False,
-    })
-    _save_registry(registry)
+    with _fabric_lock():
+        registry = _load_registry()
+        registry["models"].append({
+            "job_id": job_id,
+            "base_model": ft_model,
+            "output_model": None,
+            "suffix": ft_suffix,
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "pair_count": export["pairs"],
+            "estimated_tokens": export.get("estimated_tokens", 0),
+            "pair_types": export.get("pair_types", {}),
+            "export_mode": export_mode,
+            "status": "pending",
+            "eval_scores": None,
+            "active": False,
+        })
+        _save_registry(registry)
 
     return {
         "job_id": job_id,
@@ -818,20 +871,21 @@ def check_training(job_id=None):
     result = {"job_id": jid, "status": data.get("status", "unknown")}
 
     # update model registry
-    registry = _load_registry()
-    for m in registry["models"]:
-        if m["job_id"] != jid:
-            continue
-        if data.get("status") == "completed":
-            m["status"] = "completed"
-            m["output_model"] = data.get("model_output_name", "")
-            result["model_id"] = m["output_model"]
-            result["instruction"] = f"Run fabric_eval to test, then fabric_switch_model to activate."
-        elif data.get("status") in ("failed", "cancelled", "error"):
-            m["status"] = data["status"]
-            result["error"] = data.get("error", "unknown")
-        break
-    _save_registry(registry)
+    with _fabric_lock():
+        registry = _load_registry()
+        for m in registry["models"]:
+            if m["job_id"] != jid:
+                continue
+            if data.get("status") == "completed":
+                m["status"] = "completed"
+                m["output_model"] = data.get("model_output_name", "")
+                result["model_id"] = m["output_model"]
+                result["instruction"] = f"Run fabric_eval to test, then fabric_switch_model to activate."
+            elif data.get("status") in ("failed", "cancelled", "error"):
+                m["status"] = data["status"]
+                result["error"] = data.get("error", "unknown")
+            break
+        _save_registry(registry)
 
     return result
 
@@ -870,12 +924,13 @@ def run_eval(candidate_model, base_model=None, sample_count=10):
         return {"error": "eval output not valid JSON", "raw": result.stdout[:500]}
 
     # update registry with eval scores
-    registry = _load_registry()
-    for m in registry["models"]:
-        if m.get("output_model") == candidate_model:
-            m["eval_scores"] = scores.get("candidate_scores")
-            break
-    _save_registry(registry)
+    with _fabric_lock():
+        registry = _load_registry()
+        for m in registry["models"]:
+            if m.get("output_model") == candidate_model:
+                m["eval_scores"] = scores.get("candidate_scores")
+                break
+        _save_registry(registry)
 
     return scores
 
@@ -941,18 +996,29 @@ def switch_model(model_id, min_eval_score=0.7):
     filtered.append("OPENAI_BASE_URL=https://api.together.xyz/v1")
     filtered.append(f"OPENAI_API_KEY={key}")
 
-    # atomic write
-    tmp = env_file.with_suffix(".tmp")
-    tmp.write_text("\n".join(filtered), "utf-8")
-    tmp.rename(env_file)
-
-    # update registry
-    for m in registry["models"]:
-        if m.get("active"):
-            m["active"] = False
-    target["active"] = True
-    registry["active_model"] = model_id
-    _save_registry(registry)
+    with _fabric_lock():
+        registry = _load_registry()
+        target = None
+        old_active = registry.get("active_model")
+        for m in registry["models"]:
+            if m.get("output_model") == model_id:
+                target = m
+            if m.get("active"):
+                m["active"] = False
+        if not target:
+            return {"error": f"model {model_id} not in registry"}
+        target["active"] = True
+        registry["active_model"] = model_id
+        _save_registry(registry)
+        try:
+            _atomic_write_text(env_file, "\n".join(filtered))
+        except Exception:
+            reverted = _load_registry()
+            for m in reverted["models"]:
+                m["active"] = m.get("output_model") == old_active
+            reverted["active_model"] = old_active
+            _save_registry(reverted)
+            raise
 
     rollback = f"fabric_switch_model(model_id='{old_model}')" if old_model else "restore from .env.backup"
     return {
@@ -983,26 +1049,25 @@ def rollback_model():
             if l.startswith("LLM_MODEL="):
                 current_model = l.split("=", 1)[1].strip()
 
-    shutil.copy2(backup, env_file)
+    with _fabric_lock():
+        shutil.copy2(backup, env_file)
 
-    # read what we rolled back to
-    restored_model = None
-    for l in env_file.read_text("utf-8").split("\n"):
-        if l.startswith("LLM_MODEL="):
-            restored_model = l.split("=", 1)[1].strip()
+        restored_model = None
+        for l in env_file.read_text("utf-8").split("\n"):
+            if l.startswith("LLM_MODEL="):
+                restored_model = l.split("=", 1)[1].strip()
 
-    # update registry
-    registry = _load_registry()
-    for m in registry["models"]:
-        if m.get("active"):
-            m["active"] = False
-    restored_match = None
-    for m in registry["models"]:
-        if m.get("output_model") == restored_model:
-            m["active"] = True
-            restored_match = restored_model
-    registry["active_model"] = restored_match
-    _save_registry(registry)
+        registry = _load_registry()
+        for m in registry["models"]:
+            if m.get("active"):
+                m["active"] = False
+        restored_match = None
+        for m in registry["models"]:
+            if m.get("output_model") == restored_model:
+                m["active"] = True
+                restored_match = restored_model
+        registry["active_model"] = restored_match
+        _save_registry(registry)
 
     return {
         "status": "rolled_back",
@@ -1017,12 +1082,7 @@ def _count_session_entries():
     """Count entries written during the current session."""
     if not session_id or not FABRIC_DIR.exists():
         return 0
-    count = 0
-    for f in FABRIC_DIR.glob("*.md"):
-        head = f.read_text("utf-8")[:400]
-        if f"session_id: {session_id}" in head:
-            count += 1
-    return count
+    return sum(1 for entry in _runtime_entries() if entry.get("session_id") == session_id)
 
 
 def _count_session_linked_entries():
@@ -1030,8 +1090,7 @@ def _count_session_linked_entries():
     if not session_id or not FABRIC_DIR.exists():
         return 0
     count = 0
-    for f in FABRIC_DIR.glob("*.md"):
-        head = _parse_head(f)
+    for head in _runtime_entries():
         if head.get("session_id") != session_id:
             continue
         if head.get("review_of") or head.get("revises"):
@@ -1044,12 +1103,9 @@ def list_session_entries():
     if not session_id or not FABRIC_DIR.exists():
         return []
     results = []
-    for f in sorted(FABRIC_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime):
-        head = f.read_text("utf-8")[:400]
-        if f"session_id: {session_id}" not in head:
-            continue
-        h = _parse_head(f)
-        results.append(h)
+    for h in reversed(_runtime_entries()):
+        if h.get("session_id") == session_id:
+            results.append(h)
     return results
 
 
@@ -1099,8 +1155,7 @@ def get_entry_usage_stats():
     type_recalled: dict = {}
     type_used: dict = {}
     if FABRIC_DIR.exists():
-        for f in FABRIC_DIR.glob("*.md"):
-            h = _parse_head(f)
+        for h in _runtime_entries():
             eid = h.get("id", "")
             etype = h.get("type", "unknown")
             if eid in recalled_ids:
@@ -1123,10 +1178,7 @@ def get_entry_usage_stats():
 
 def build_weekly_report():
     """Corpus health report: entry types, training values, recall stats."""
-    entries = []
-    if FABRIC_DIR.exists():
-        for f in FABRIC_DIR.glob("*.md"):
-            entries.append(_parse_head(f))
+    entries = _runtime_entries() if FABRIC_DIR.exists() else []
 
     by_type: dict = {}
     by_tv = {"high": 0, "normal": 0, "low": 0, "unset": 0}

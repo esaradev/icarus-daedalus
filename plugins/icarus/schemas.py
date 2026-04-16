@@ -58,7 +58,11 @@ FABRIC_WRITE = {
             },
             "summary": {
                 "type": "string",
-                "description": "One-line summary (shown in listings and search results)",
+                "description": (
+                    "One-line summary used as the Obsidian note title and shown in listings/search. "
+                    "Write it like a clean note title: 2-6 words, specific, searchable, noun-first, "
+                    "no filler like 'notes on', 'misc', 'untitled', or vague labels like 'plugin stuff'."
+                ),
             },
             "tags": {
                 "type": "string",
@@ -250,6 +254,121 @@ FABRIC_TRAIN = {
                 "description": "Together checkpoint count, must be >= 1 (default: 1)",
             },
         },
+        "required": [],
+    },
+}
+
+FABRIC_WIKI_INIT = {
+    "name": "fabric_wiki_init",
+    "description": (
+        "Initialize the persistent markdown wiki that sits between raw fabric "
+        "entries and query-time retrieval. Creates the wiki folder structure, "
+        "schema file, and Home page for direct use in Obsidian."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
+
+FABRIC_WIKI_GET_PAGE = {
+    "name": "fabric_wiki_get_page",
+    "description": (
+        "Read a wiki page by title. Use this before updating an existing page so "
+        "you extend the persistent artifact instead of recreating it from scratch."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Exact wiki page title",
+            },
+        },
+        "required": ["title"],
+    },
+}
+
+FABRIC_WIKI_UPSERT_PAGE = {
+    "name": "fabric_wiki_upsert_page",
+    "description": (
+        "Create or update a persistent wiki page. Use for synthesized knowledge, "
+        "not raw source storage. Prefer updating existing pages and include "
+        "wikilinks/source_refs so the wiki compounds over time."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Page title as it should appear in Obsidian",
+            },
+            "page_type": {
+                "type": "string",
+                "enum": ["entity", "person", "project", "topic", "decision", "source", "index", "other"],
+                "description": "Controls which wiki folder the page lives in",
+            },
+            "summary": {
+                "type": "string",
+                "description": "Short factual summary stored in frontmatter",
+            },
+            "content": {
+                "type": "string",
+                "description": "Full markdown body for the page",
+            },
+            "wikilinks": {
+                "type": "string",
+                "description": "Comma-separated related page titles",
+            },
+            "source_refs": {
+                "type": "string",
+                "description": "Comma-separated provenance refs such as fabric entry ids, file paths, or URLs",
+            },
+            "aliases": {
+                "type": "string",
+                "description": "Comma-separated alternate names for this page",
+            },
+            "tags": {
+                "type": "string",
+                "description": "Comma-separated tags",
+            },
+        },
+        "required": ["title", "content"],
+    },
+}
+
+FABRIC_WIKI_SEARCH = {
+    "name": "fabric_wiki_search",
+    "description": (
+        "Keyword search across wiki pages. Use for fast lookup when you need to "
+        "find an existing synthesized page or inspect where a concept appears."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Keyword or phrase to search for",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum results to return (default: 10)",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+FABRIC_WIKI_OVERVIEW = {
+    "name": "fabric_wiki_overview",
+    "description": (
+        "Return wiki status: folder path, page counts by section, and recently "
+        "updated pages. Use this to understand the current shape of the wiki."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
         "required": [],
     },
 }

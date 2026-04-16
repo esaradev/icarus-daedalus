@@ -234,3 +234,67 @@ def fabric_report(args: dict, **kwargs) -> str:
         return _json(result)
     except Exception as e:
         return _json({"error": str(e)})
+
+
+def fabric_wiki_init(args: dict, **kwargs) -> str:
+    try:
+        from . import wiki
+        result = wiki.init_wiki()
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_wiki_get_page(args: dict, **kwargs) -> str:
+    title = args.get("title", "").strip()
+    if not title:
+        return _json({"error": "title is required"})
+    try:
+        from . import wiki
+        result = wiki.get_page(title)
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_wiki_upsert_page(args: dict, **kwargs) -> str:
+    title = args.get("title", "").strip()
+    content = args.get("content", "").strip()
+    if not title or not content:
+        return _json({"error": "title and content are required"})
+    try:
+        from . import wiki
+        result = wiki.upsert_page(
+            title=title,
+            content=content,
+            page_type=args.get("page_type", "other"),
+            summary=args.get("summary", ""),
+            wikilinks=args.get("wikilinks", ""),
+            source_refs=args.get("source_refs", ""),
+            aliases=args.get("aliases", ""),
+            tags=args.get("tags", ""),
+        )
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_wiki_search(args: dict, **kwargs) -> str:
+    query = args.get("query", "").strip()
+    if not query:
+        return _json({"error": "query is required"})
+    try:
+        from . import wiki
+        result = wiki.search_pages(query, limit=args.get("limit", 10))
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
+
+
+def fabric_wiki_overview(args: dict, **kwargs) -> str:
+    try:
+        from . import wiki
+        result = wiki.wiki_overview()
+        return _json(result)
+    except Exception as e:
+        return _json({"error": str(e)})
