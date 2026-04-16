@@ -232,7 +232,7 @@ Fabric is a chronological log of agent events. The wiki is a compounding, interl
     entities/ topics/ sources/ indexes/ notes/
 ```
 
-Tools: `wiki_init`, `wiki_ingest`, `wiki_query`, `wiki_lint`. Skill doc at `skills/llm-wiki/SKILL.md`. Browse inside the Hermes Dashboard `Icarus` view, or open `~/fabric/` in Obsidian — the wikilinks fill the graph immediately. Runs the same dashboard (`npm run dev`), just a new sidebar entry. No new database. Markdown-first, git-revertable, Obsidian-compatible.
+Tools: `wiki_init`, `wiki_ingest`, `wiki_query`, `wiki_lint`. Skill doc at `skills/llm-wiki/SKILL.md`. The canonical Icarus view now lives in the Hermes fork at `esaradev/hermes-agent` — run `hermes dashboard` and open the Icarus tab. The view inside this repo's dashboard is kept for existing users but is feature-frozen. Open `~/fabric/` in Obsidian to browse directly. Markdown-first, git-revertable, Obsidian-compatible.
 
 ## Demo
 

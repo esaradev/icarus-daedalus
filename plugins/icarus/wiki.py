@@ -5,14 +5,20 @@ Three-folder contract under FABRIC_DIR:
   wiki/    LLM-owned pages (entities, topics, sources, indexes, notes)
   wiki/_schema.json   ingest rules + conventions
 
-v1 scope:
+Tools:
   init_wiki — scaffold
   ingest    — raw source -> source page + entity/topic pages + index + log
   query     — grep wiki first, raw second
   lint      — report broken wikilinks, orphan pages, pages without sources
 
-Entity extraction in v1 is deterministic: markdown headings + capitalized noun
-phrases + URLs. No LLM call. See SKILL.md for upgrade notes.
+Entity/topic extraction:
+  v1.0 shipped a deterministic heuristic (headings + repeated capitalized
+  phrases). v1.1 adds an LLM path via Together AI (reuses TOGETHER_API_KEY)
+  that returns a JSON list of {kind, title, slug, summary}. The LLM path
+  falls back silently to the heuristic when the key is missing, the call
+  errors, or the response is malformed. Set WIKI_LLM_EXTRACTION=0 to force
+  the heuristic. Every ingest records which path ran via extraction_mode
+  in the response and in the source page frontmatter.
 """
 
 from __future__ import annotations
@@ -20,13 +26,39 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import urllib.error
+import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+LLM_TIMEOUT_S = 30
+
+# Provider registry, picked in order. First one with an available key wins.
+# All providers use the OpenAI chat/completions wire format.
+_PROVIDERS = [
+    ("openrouter", "OPENROUTER_API_KEY",
+     "https://openrouter.ai/api/v1/chat/completions",
+     "anthropic/claude-haiku-4-5"),
+    ("anthropic_openai", "ANTHROPIC_API_KEY",
+     "https://api.anthropic.com/v1/chat/completions",
+     "claude-haiku-4-5"),
+    ("openai", "OPENAI_API_KEY",
+     "https://api.openai.com/v1/chat/completions",
+     "gpt-4o-mini"),
+    ("together", "TOGETHER_API_KEY",
+     "https://api.together.xyz/v1/chat/completions",
+     "meta-llama/Llama-3.1-8B-Instruct-Turbo"),
+]
+
+# Back-compat aliases for code still importing these.
+LLM_MODEL_DEFAULT = _PROVIDERS[0][3]
+LLM_ENDPOINT = _PROVIDERS[0][2]
 
 WIKI_SUBDIRS = ("entities", "topics", "sources", "indexes", "notes")
 
@@ -155,13 +187,12 @@ _STOPPHRASES = {
 }
 
 
-def _extract_candidates(text: str, max_pages: int = 5) -> list[dict]:
-    """Return up to max_pages candidate entity/topic dicts.
+def _extract_candidates_heuristic(text: str, max_pages: int = 5) -> list[dict]:
+    """Deterministic v1 extractor. Each dict: {kind, title, slug, evidence}.
 
-    Each dict: {kind: "entity"|"topic", title, slug, evidence}
-    Heuristic: headings become topic pages; repeated capitalized phrases
-    become entity pages. We interleave topics and entities so both kinds
-    show up even when one is abundant.
+    Headings -> topic pages. Repeated capitalized phrases -> entity pages.
+    Topics and entities are interleaved so both kinds surface when one is
+    abundant. Pure Python, no network.
     """
     topics: list[dict] = []
     entities: list[dict] = []
@@ -210,6 +241,442 @@ def _extract_candidates(text: str, max_pages: int = 5) -> list[dict]:
         if j < len(entities):
             out.append(entities[j]); j += 1
     return out
+
+
+# ── LLM extractor (v1.1) ─────────────────────────────────────────────────
+
+_LLM_SYSTEM = (
+    "You extract structured entity and topic candidates from a markdown source "
+    "for a personal knowledge wiki. Return strict JSON only, no prose."
+)
+
+_LLM_USER_TEMPLATE = """Read the source and return up to {max_pages} candidates that would each make a useful wiki page.
+
+Rules:
+- kind is "entity" for people, products, organisations, projects.
+- kind is "topic" for concepts, themes, techniques, patterns.
+- title is the human-readable page title.
+- slug is kebab-case, lowercase, no punctuation, no spaces, <= 64 chars.
+- summary is one line, <= 160 chars, grounded strictly in the source.
+- Omit generic filler ("Introduction", "Overview") and pronouns.
+- Prefer entities that appear only once over repeated noise.
+
+Output JSON object exactly like:
+{{"candidates": [{{"kind": "entity", "title": "Andrej Karpathy", "slug": "andrej-karpathy", "summary": "..."}}]}}
+
+Source:
+<<<
+{source}
+>>>"""
+
+
+def _load_env_file_keys() -> dict[str, str]:
+    """Read $HERMES_HOME/.env so we can pick up keys that were set there
+    rather than exported in the shell that launched the dashboard."""
+    out: dict[str, str] = {}
+    hh = os.environ.get("HERMES_HOME", "")
+    if not hh:
+        return out
+    env_path = Path(hh) / ".env"
+    if not env_path.exists():
+        return out
+    try:
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return out
+
+
+def _pick_llm_provider() -> Optional[tuple[str, str, str, str]]:
+    """Return (key, endpoint, model, name) for the first configured provider,
+    or None if nothing is set. Respects WIKI_LLM_MODEL as an override."""
+    env_file = _load_env_file_keys()
+    model_override = os.environ.get("WIKI_LLM_MODEL", "").strip()
+    for name, env_var, endpoint, default_model in _PROVIDERS:
+        key = os.environ.get(env_var, "").strip() or env_file.get(env_var, "").strip()
+        if key:
+            return key, endpoint, model_override or default_model, name
+    return None
+
+
+def _together_key_for_wiki() -> str:
+    """Back-compat shim for tests. Returns the first configured provider key."""
+    picked = _pick_llm_provider()
+    return picked[0] if picked else ""
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.IGNORECASE)
+
+
+def _loose_parse_json_object(text: str) -> dict:
+    """Parse a JSON object from an LLM response that may include prose or
+    markdown fences. Falls back to the first {...} span in the text."""
+    text = (text or "").strip()
+    try:
+        out = json.loads(text)
+        if isinstance(out, dict):
+            return out
+    except Exception:
+        pass
+    m = _JSON_FENCE_RE.search(text)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+    # last resort: first balanced {...}
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        for i in range(start, len(text)):
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except Exception:
+                        break
+    raise ValueError("LLM response did not contain a parseable JSON object")
+
+
+def _summarize_llm_error(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            detail = ""
+        if detail:
+            detail = re.sub(r"\s+", " ", detail)[:160]
+            return f"http-{exc.code}: {detail}"
+        return f"http-{exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return f"network: {exc.reason}"
+    return re.sub(r"\s+", " ", str(exc)).strip()[:160] or exc.__class__.__name__
+
+
+def _extract_candidates_llm(text: str, max_pages: int = 5) -> list[dict]:
+    """Call the configured LLM provider to get entity/topic candidates as JSON.
+
+    Raises on any failure (no-key, network, malformed JSON, empty result).
+    Caller is responsible for fallback.
+    """
+    picked = _pick_llm_provider()
+    if not picked:
+        raise RuntimeError("no LLM provider key configured")
+    key, endpoint, model, _ = picked
+
+    # bound the source we send; most sources are small, but cap to keep latency sane
+    trimmed = text if len(text) <= 8000 else text[:8000]
+    prompt = _LLM_USER_TEMPLATE.format(max_pages=max_pages, source=trimmed)
+
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _LLM_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 512,
+        "temperature": 0.2,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    resp = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S)
+    body = json.loads(resp.read())
+    content = body["choices"][0]["message"]["content"]
+    parsed = _loose_parse_json_object(content)
+    raw_items = parsed.get("candidates") if isinstance(parsed, dict) else None
+    if not isinstance(raw_items, list):
+        raise ValueError("LLM response missing 'candidates' list")
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        title = (item.get("title") or "").strip()
+        if kind not in ("entity", "topic") or len(title) < 3:
+            continue
+        slug = _slugify(item.get("slug") or title)
+        if slug in seen:
+            continue
+        seen.add(slug)
+        summary = (item.get("summary") or "").strip()[:240]
+        out.append({
+            "kind": kind,
+            "title": title,
+            "slug": slug,
+            "evidence": summary or "LLM-extracted",
+        })
+        if len(out) >= max_pages:
+            break
+    if not out:
+        raise ValueError("LLM returned no valid candidates")
+    return out
+
+
+def _extract_candidates(text: str, max_pages: int = 5) -> tuple[list[dict], str, str]:
+    """Dispatch to LLM or heuristic and report which path ran.
+
+    Returns (candidates, mode) where mode is one of:
+      "llm"                — LLM call succeeded
+      "heuristic"          — WIKI_LLM_EXTRACTION=0 (explicit opt-out)
+      "heuristic-no-key"   — no API key configured
+      "heuristic-fallback" — LLM call attempted but failed
+    """
+    if os.environ.get("WIKI_LLM_EXTRACTION", "1") == "0":
+        return _extract_candidates_heuristic(text, max_pages), "heuristic", "WIKI_LLM_EXTRACTION=0"
+    picked = _pick_llm_provider()
+    if not picked:
+        return (
+            _extract_candidates_heuristic(text, max_pages),
+            "heuristic-no-key",
+            "No LLM provider key found (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY)",
+        )
+    try:
+        return _extract_candidates_llm(text, max_pages), "llm", f"{picked[3]} extraction succeeded"
+    except Exception as exc:
+        reason = _summarize_llm_error(exc)
+        logger.info("icarus.wiki: LLM extraction fell back (%s)", reason)
+        return _extract_candidates_heuristic(text, max_pages), "heuristic-fallback", reason
+
+
+def llm_status(live: bool = True) -> dict:
+    enabled = os.environ.get("WIKI_LLM_EXTRACTION", "1") != "0"
+    picked = _pick_llm_provider()
+    status = {
+        "enabled": enabled,
+        "provider": picked[3] if picked else None,
+        "model": picked[2] if picked else None,
+        "endpoint": picked[1] if picked else None,
+        "key_present": picked is not None,
+        "live_check": bool(live),
+    }
+    if not enabled:
+        return {**status, "status": "disabled", "reason": "WIKI_LLM_EXTRACTION=0"}
+    if not picked:
+        return {
+            **status,
+            "status": "missing_key",
+            "reason": "No LLM provider key set (OPENROUTER_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / TOGETHER_API_KEY)",
+        }
+    if not live:
+        return {**status, "status": "configured", "reason": "Live check skipped"}
+
+    key, endpoint, model, _ = picked
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Reply with the single word ok."},
+            {"role": "user", "content": "ping"},
+        ],
+        "max_tokens": 8,
+        "temperature": 0,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
+            body = json.loads(resp.read())
+        return {
+            **status,
+            "status": "ok",
+            "http_status": getattr(resp, "status", 200),
+            "response_id": body.get("id", ""),
+            "reason": "Together endpoint accepted request",
+        }
+    except Exception as exc:
+        return {
+            **status,
+            "status": "error",
+            "reason": _summarize_llm_error(exc),
+        }
+
+
+# ── Ask (v1.2) ───────────────────────────────────────────────────────────
+# Ground an LLM answer in the wiki. v1 retrieval is keyword overlap, which
+# is fine for a personal wiki on the order of 10-500 pages. Swap for
+# embeddings when corpus size justifies the cost.
+
+_ASK_SYSTEM = (
+    "You answer questions strictly from the provided wiki pages. Cite the "
+    "pages you used with their [[path]] wikilinks inline in your answer. "
+    "If the pages don't contain the answer, say so plainly — do not make "
+    "up facts. Be concise."
+)
+
+
+def _tokenize(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]{3,}", text.lower())}
+
+
+def _rank_pages(question: str, pages: list[dict], limit: int = 6) -> list[dict]:
+    q_tokens = _tokenize(question)
+    if not q_tokens:
+        return []
+    scored: list[tuple[int, dict]] = []
+    for p in pages:
+        haystack = " ".join(filter(None, [
+            p.get("title", ""), p.get("summary", ""), p.get("body", ""),
+        ]))
+        overlap = len(q_tokens & _tokenize(haystack))
+        if overlap:
+            scored.append((overlap, p))
+    scored.sort(key=lambda s: s[0], reverse=True)
+    return [p for _, p in scored[:limit]]
+
+
+def _load_wiki_pages(fabric_dir: Path) -> list[dict]:
+    wiki = _wiki_root(fabric_dir)
+    if not wiki.exists():
+        return []
+    out: list[dict] = []
+    for sub in WIKI_SUBDIRS:
+        d = wiki / sub
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.md")):
+            text = f.read_text("utf-8", errors="replace")
+            fm, body = _parse_frontmatter(text)
+            out.append({
+                "path": f"{sub}/{f.stem}",
+                "title": fm.get("title", f.stem),
+                "summary": fm.get("summary", ""),
+                "body": body,
+            })
+    return out
+
+
+def ask(question: str, fabric_dir: Path, max_pages: int = 6) -> dict:
+    """Answer a question using the wiki as the sole source.
+
+    Returns {question, answer, citations, pages_considered, mode, reason}.
+    mode is "llm" on success or "error" with a reason describing the cause.
+    """
+    q = (question or "").strip()
+    if not q:
+        return {"error": "empty question"}
+
+    pages = _load_wiki_pages(Path(fabric_dir))
+    if not pages:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [],
+            "mode": "empty",
+            "reason": "No wiki pages found. Ingest a source first.",
+        }
+
+    top = _rank_pages(q, pages, max_pages)
+    if not top:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [],
+            "mode": "no_match",
+            "reason": "No pages mention any keywords from your question.",
+        }
+
+    picked = _pick_llm_provider()
+    if not picked:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [p["path"] for p in top],
+            "mode": "no_key",
+            "reason": "No LLM provider key found — retrieved pages listed below.",
+        }
+    key, endpoint, model, _ = picked
+
+    context = "\n\n".join(
+        f"=== [[{p['path']}]] ===\n"
+        f"Title: {p['title']}\n"
+        f"Summary: {p['summary']}\n\n"
+        f"{p['body'][:2000]}"
+        for p in top
+    )
+
+    prompt = (
+        f"Wiki pages (use only these):\n\n{context}\n\n"
+        f"Question: {q}\n\n"
+        f"Answer using only the pages above. Cite each page you use with its "
+        f"[[path]] wikilink inline."
+    )
+
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _ASK_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 700,
+        "temperature": 0.2,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S)
+        body = json.loads(resp.read())
+        answer = body["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        return {
+            "question": q,
+            "answer": "",
+            "citations": [],
+            "pages_considered": [p["path"] for p in top],
+            "mode": "error",
+            "reason": _summarize_llm_error(exc),
+        }
+
+    cited = [p for p in re.findall(r"\[\[([^\]]+)\]\]", answer)
+             if p in {x["path"] for x in top}]
+    # dedupe preserving order
+    seen: set[str] = set()
+    citations = [c for c in cited if not (c in seen or seen.add(c))]
+
+    return {
+        "question": q,
+        "answer": answer,
+        "citations": citations,
+        "pages_considered": [p["path"] for p in top],
+        "mode": "llm",
+        "reason": f"Answered from {len(citations)} cited page(s).",
+    }
 
 
 # ── Page I/O ─────────────────────────────────────────────────────────────
@@ -270,6 +737,7 @@ def _upsert_page(
     source_link: str,
     body_append: Optional[str] = None,
     generated_block_key: Optional[str] = None,
+    extra_frontmatter: Optional[dict] = None,
 ) -> bool:
     """Create or update a wiki page. Returns True if created, False if updated."""
     now = _now()
@@ -282,6 +750,9 @@ def _upsert_page(
                 f"[{existing}, {source_link!r}]" if existing else f"[{source_link!r}]"
             )
         fm["updated"] = now
+        if extra_frontmatter:
+            for k, v in extra_frontmatter.items():
+                fm[k] = v
         if body_append:
             if generated_block_key:
                 body = _upsert_generated_block(body, generated_block_key, body_append)
@@ -298,6 +769,9 @@ def _upsert_page(
         "created": now,
         "updated": now,
     }
+    if extra_frontmatter:
+        for k, v in extra_frontmatter.items():
+            fm[k] = v
     body = f"\n# {title}\n\n{summary}\n"
     if body_append:
         if generated_block_key:
@@ -340,7 +814,7 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
     title_guess = _derive_title(text, fallback=src.stem)
     summary = _derive_summary(text)
 
-    candidates = _extract_candidates(text, max_pages=4)
+    candidates, extraction_mode, extraction_reason = _extract_candidates(text, max_pages=4)
     see_also = "\n".join(
         f"- [[{('entities' if c['kind'] == 'entity' else 'topics')}/{c['slug']}]]"
         for c in candidates
@@ -361,6 +835,10 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         source_link=source_link,
         body_append=src_body,
         generated_block_key=f"source:{rel_source}",
+        extra_frontmatter={
+            "extraction_mode": extraction_mode,
+            "extraction_reason": extraction_reason,
+        },
     )
     created: list[str] = []
     updated: list[str] = []
@@ -398,6 +876,8 @@ def ingest(source_path: str | Path, fabric_dir: Path) -> dict:
         "pages_created": created,
         "pages_updated": updated,
         "links": page_links,
+        "extraction_mode": extraction_mode,
+        "extraction_reason": extraction_reason,
     }
 
 

@@ -77,6 +77,16 @@ export function Icarus() {
 
   return (
     <div className="space-y-4">
+      <div className="bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+        <div className="text-[11px] text-warning font-medium">
+          This view is now part of the Hermes dashboard.
+        </div>
+        <div className="text-[11px] text-text-2 mt-0.5">
+          The canonical Icarus wiki view lives in the Hermes fork at{" "}
+          <code className="font-mono">esaradev/hermes-agent</code> → <code className="font-mono">hermes dashboard</code> → Icarus.
+          This page is kept for existing users and will stop receiving new features.
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Pages" value={pages.length} />
         <Stat label="Sources ingested" value={sourceCount} />
@@ -152,19 +162,46 @@ function relTime(iso: string) {
   return `${Math.round(delta / 86400)}d ago`
 }
 
+const MODE_STYLES: Record<string, string> = {
+  llm: "border-accent/40 text-accent bg-accent/10",
+  heuristic: "border-border text-text-3 bg-surface-3",
+  "heuristic-no-key": "border-border text-text-3 bg-surface-3",
+  "heuristic-fallback": "border-warning/40 text-warning bg-warning/10",
+}
+
 function PageView({ page, onNavigate, pages }: {
   page: WikiPage
   onNavigate: (p: string) => void
   pages: WikiPage[]
 }) {
   const paths = new Set(pages.map((p) => p.path))
+  const mode = page.frontmatter.extraction_mode
+  const modeReason = page.frontmatter.extraction_reason
   return (
     <article>
       <div className="flex items-baseline justify-between mb-1">
         <h2 className="text-[16px] font-semibold">{page.title}</h2>
-        <span className="text-[11px] text-text-3 uppercase">{page.type}</span>
+        <div className="flex items-center gap-2">
+          {mode && (
+            <span
+              title={modeReason
+                ? `How entity/topic pages were extracted from the source: ${modeReason}`
+                : "How entity/topic pages were extracted from the source"}
+              className={cn(
+                "text-[10px] font-mono uppercase tracking-wide px-1.5 py-0.5 rounded border",
+                MODE_STYLES[mode] || "border-border text-text-3"
+              )}
+            >
+              {mode}
+            </span>
+          )}
+          <span className="text-[11px] text-text-3 uppercase">{page.type}</span>
+        </div>
       </div>
       {page.summary && <p className="text-[12px] text-text-2 mb-4">{page.summary}</p>}
+      {modeReason && (
+        <p className="text-[11px] text-text-3 mb-4">{modeReason}</p>
+      )}
       <div className="prose-wiki text-[13px] leading-6">
         {renderMarkdown(page.body, paths, onNavigate)}
       </div>

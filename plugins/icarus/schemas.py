@@ -437,9 +437,14 @@ WIKI_INGEST = {
     "description": (
         "Ingest a raw source file (must live under $FABRIC_DIR/raw/) into the "
         "wiki. Creates a source page with provenance, extracts up to 4 entity/"
-        "topic pages via deterministic heuristics (headings + repeated "
-        "capitalized phrases), updates index.md and appends to log.md. "
-        "Drop files into raw/inbox/ first, then call this."
+        "topic pages, updates index.md and appends to log.md. Drop files "
+        "into raw/inbox/ first, then call this.\n"
+        "Entity/topic extraction runs via an LLM (Together AI, reuses "
+        "TOGETHER_API_KEY) when available and falls back to a deterministic "
+        "heuristic (headings + repeated capitalized phrases) when the key is "
+        "missing, the call fails, or WIKI_LLM_EXTRACTION=0. The response "
+        "includes an `extraction_mode` field: 'llm', 'heuristic', "
+        "'heuristic-no-key', or 'heuristic-fallback'."
     ),
     "parameters": {
         "type": "object",
@@ -478,4 +483,48 @@ WIKI_LINT = {
         "Report-only — does not modify any files."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
+WIKI_ASK = {
+    "name": "wiki_ask",
+    "description": (
+        "Answer a question using only the Icarus wiki. Retrieves the most "
+        "relevant pages by keyword overlap, then asks the LLM to answer "
+        "citing them with [[wikilinks]]. Requires TOGETHER_API_KEY. When "
+        "the key is missing, returns the retrieved pages without a synthesized "
+        "answer so the caller can still show grounding."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": "Natural-language question to answer from the wiki",
+            },
+            "max_pages": {
+                "type": "integer",
+                "description": "Max pages to retrieve (default 6)",
+            },
+        },
+        "required": ["question"],
+    },
+}
+
+WIKI_LLM_STATUS = {
+    "name": "wiki_llm_status",
+    "description": (
+        "Check whether wiki LLM extraction is configured and whether the "
+        "Together chat completions endpoint accepts the current key/model. "
+        "Use this to debug heuristic-fallback vs llm behavior."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "live": {
+                "type": "boolean",
+                "description": "When true (default), make a live Together API request.",
+            },
+        },
+        "required": [],
+    },
 }

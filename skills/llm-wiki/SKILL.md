@@ -96,9 +96,11 @@ wiki_lint()                                  # optional health check
 5. Before ingesting, confirm the file is already under `~/fabric/raw/`. The tool rejects paths outside that root.
 6. If a source is already in the wiki, re-ingesting updates the existing pages rather than creating duplicates (hash-keyed upsert).
 
-## Entity extraction is deterministic in v1
+## Entity extraction: LLM with heuristic fallback (v1.1)
 
-Extraction uses headings and repeated capitalized phrases — no LLM call inside the tool. The output is a clean structural scaffold. If you want richer synthesis, write it yourself into the existing entity/topic pages after ingest; the tool will preserve your additions on re-ingest.
+When `TOGETHER_API_KEY` is set the tool calls Together's chat endpoint to pick entity/topic candidates. Default model is `meta-llama/Llama-3.1-8B-Instruct-Turbo`; override with `WIKI_LLM_MODEL`. If the key is missing, the network call fails, or the response is malformed, ingest silently falls back to the v1 deterministic heuristic (headings + repeated capitalized phrases) — you still get pages, just cheaper ones. Force the heuristic with `WIKI_LLM_EXTRACTION=0`.
+
+Every ingest response carries `extraction_mode`: `llm`, `heuristic`, `heuristic-no-key`, or `heuristic-fallback`. The same value is written into the source page's frontmatter so the dashboard can show a badge. Your hand-edits on entity/topic pages are preserved across re-ingests (content outside the `ICARUS_GENERATED` markers is never touched).
 
 ## Dashboard
 
