@@ -146,6 +146,7 @@ export const api = {
   wikiHealth: () => get<WikiHealth>("/wiki/health"),
   wikiBacklinks: (memory_entry_id: number) =>
     get<WikiBacklink[]>(`/wiki/backlinks?memory_entry_id=${memory_entry_id}`),
+  maintenanceStatus: () => get<MaintenanceStatus>("/maintenance/status"),
 };
 
 export type WikiTree = {
@@ -172,6 +173,28 @@ export type WikiPageDetail = {
   sources: { ref?: string }[];
   updated_at: string;
   frontmatter: Record<string, unknown>;
+};
+
+export type MaintenanceStatus = {
+  corpus: {
+    total: number;
+    quality_avg: number;
+    stale_count: number;
+    healthy_count: number;
+    distribution: { range: string; count: number }[];
+  };
+  fabric: {
+    total: number;
+    cold_count: number;
+    duplicate_count: number;
+    stale_count: number;
+    by_type: Record<string, number>;
+  };
+  wiki: {
+    page_count: number;
+    broken_links: number;
+    orphan_pages: number;
+  };
 };
 
 export type WikiHealth = {

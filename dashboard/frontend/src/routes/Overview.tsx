@@ -23,6 +23,11 @@ export default function Overview() {
     queryFn: api.wikiHealth,
     refetchInterval: 60_000,
   });
+  const maint = useQuery({
+    queryKey: ["maintenance", "status"],
+    queryFn: api.maintenanceStatus,
+    refetchInterval: 60_000,
+  });
 
   if (fleet.isLoading) return <div className="text-zinc-500">loading…</div>;
   if (fleet.error) return <div className="text-rose-400">backend error: {(fleet.error as Error).message}</div>;
@@ -59,6 +64,34 @@ export default function Overview() {
           <ActivityFeed events={activity.data ?? []} />
         </div>
       </section>
+
+      {maint.data ? (
+        <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-medium text-zinc-200">Corpus health</h2>
+            <span className="text-xs font-mono text-zinc-500">
+              avg quality {maint.data.corpus.quality_avg.toFixed(2)} · {maint.data.corpus.total} entries
+            </span>
+          </div>
+          <div className="flex items-end gap-1 h-12">
+            {maint.data.corpus.distribution.map((d) => {
+              const max = Math.max(1, ...maint.data!.corpus.distribution.map((b) => b.count));
+              return (
+                <div key={d.range} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.range}: ${d.count}`}>
+                  <div className="w-full rounded-sm bg-zinc-700" style={{ height: `${(d.count / max) * 100}%`, minHeight: d.count ? "2px" : 0 }} />
+                  <div className="text-[9px] font-mono text-zinc-600">{d.range.split("-")[0]}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex gap-4 mt-2 text-[11px] font-mono text-zinc-500">
+            <span>{maint.data.corpus.healthy_count} healthy</span>
+            <span>{maint.data.corpus.stale_count} stale</span>
+            <span>{maint.data.fabric.duplicate_count} dup candidates</span>
+            <span>{maint.data.wiki.broken_links} broken links</span>
+          </div>
+        </section>
+      ) : null}
 
       {f.projects.length > 0 ? (
         <section>

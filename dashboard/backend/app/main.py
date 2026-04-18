@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .ingest import watcher as ingest_watcher
-from .routers import fleet, agents, memory, recalls, wiki as wiki_router
+from .routers import fleet, agents, memory, recalls, wiki as wiki_router, maintenance as maint_router
 from .wiki import worker as wiki_worker
 from .wiki import reader as wiki_reader
 
@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(recalls.router)
     app.include_router(wiki_router.router)
+    app.include_router(maint_router.router)
 
     @app.get("/health")
     def health():

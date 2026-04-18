@@ -16,24 +16,25 @@ from ..schemas import (
 from sqlalchemy import func
 from ..wiki import reader as wiki_reader, bridge as wiki_bridge
 
-_LINT_CACHE: dict = {"at": 0.0, "value": None}
+_STALE_CACHE: dict = {"at": 0.0, "value": None}
 
 
-def _orphan_count_cached() -> int:
+def _stale_count_cached(db) -> int:
     now = time.time()
-    if _LINT_CACHE["value"] is not None and now - _LINT_CACHE["at"] < 60:
-        return int(_LINT_CACHE["value"])
+    if _STALE_CACHE["value"] is not None and now - _STALE_CACHE["at"] < 60:
+        return int(_STALE_CACHE["value"])
     try:
-        result = wiki_bridge.lint(wiki_reader.fabric_dir())
-        count = len(result.get("orphan_pages") or [])
+        health = corpus_health(db)
+        count = health.get("stale_count", 0)
     except Exception:
         count = 0
-    _LINT_CACHE["at"] = now
-    _LINT_CACHE["value"] = count
+    _STALE_CACHE["at"] = now
+    _STALE_CACHE["value"] = count
     return count
 
 
 from ..services import metrics as M
+from ..maintenance.scorer import corpus_health
 
 router = APIRouter(tags=["fleet"])
 
@@ -115,7 +116,7 @@ def fleet(db: DBSession = Depends(get_db)) -> FleetOut:
             verification_rate=M.verification_rate(db),
             entries_today=M.entries_today(db),
             promotions_today=int(promotions_today),
-            stale_knowledge_count=_orphan_count_cached(),
+            stale_knowledge_count=_stale_count_cached(db),
             contradiction_count=0,
             unresolved_handoffs=0,
         ),
