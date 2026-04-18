@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
 from ..models import MemoryEntry, Recall
@@ -38,6 +38,7 @@ def score_entry(entry: MemoryEntry, recall_count: int = 0) -> dict[str, float]:
 def recall_counts_for_entries(db: DBSession, entry_ids: list[int]) -> dict[int, int]:
     if not entry_ids:
         return {}
+    wanted = set(entry_ids)
     rows = db.execute(select(Recall)).scalars().all()
     counts: dict[int, int] = {}
     for r in rows:
@@ -46,13 +47,13 @@ def recall_counts_for_entries(db: DBSession, entry_ids: list[int]) -> dict[int, 
                 eid = int(eid)
             except (TypeError, ValueError):
                 continue
-            if eid in entry_ids:
+            if eid in wanted:
                 counts[eid] = counts.get(eid, 0) + 1
     return counts
 
 
 def corpus_health(db: DBSession) -> dict:
-    entries = db.execute(select(MemoryEntry).order_by(MemoryEntry.created_at.desc()).limit(500)).scalars().all()
+    entries = db.execute(select(MemoryEntry).order_by(MemoryEntry.created_at.desc())).scalars().all()
     if not entries:
         return {"total": 0, "quality_avg": 0.0, "stale_count": 0, "healthy_count": 0, "distribution": []}
 
