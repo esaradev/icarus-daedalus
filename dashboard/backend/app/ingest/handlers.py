@@ -275,9 +275,10 @@ DISPATCH = {
 }
 
 
-def dispatch(db: DBSession, evt: dict) -> None:
+def dispatch(db: DBSession, evt: dict) -> bool:
     kind = evt.get("type")
     fn = DISPATCH.get(kind)
     if fn is None:
-        return
+        return False
     fn(db, evt)
+    return True

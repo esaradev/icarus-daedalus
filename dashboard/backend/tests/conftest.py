@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import db as app_db
 from app.models import Base
+from app.ingest import watcher as ingest_watcher
 from app.routers import memory as memory_router
 from app.wiki import worker as wiki_worker
 
@@ -55,6 +56,7 @@ def test_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FABRIC_DIR", str(fabric_dir))
     monkeypatch.setattr(app_db, "engine", engine)
     monkeypatch.setattr(app_db, "SessionLocal", SessionLocal)
+    monkeypatch.setattr(ingest_watcher, "SessionLocal", SessionLocal)
     monkeypatch.setattr(memory_router, "get_db", app_db.get_db)
     monkeypatch.setattr(wiki_worker, "SessionLocal", SessionLocal)
 

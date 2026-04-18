@@ -48,19 +48,25 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     return meta, m.group(2)
 
 
-def _latest_ts_in_jsonl(path: Path) -> str | None:
+def _latest_memory_write_ts_by_source(path: Path) -> dict[str, str]:
     if not path.exists():
-        return None
-    latest = None
+        return {}
+    latest: dict[str, str] = {}
     with path.open() as f:
         for line in f:
             try:
                 e = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            t = e.get("at")
-            if t and (latest is None or t > latest):
-                latest = t
+            if e.get("type") != "memory.write":
+                continue
+            source_path = e.get("source_path")
+            ts = e.get("at")
+            if not source_path or not ts:
+                continue
+            prev = latest.get(str(source_path))
+            if prev is None or str(ts) > prev:
+                latest[str(source_path)] = str(ts)
     return latest
 
 
@@ -122,7 +128,7 @@ def _md_to_events(path: Path) -> list[dict]:
 
 
 def backfill(fabric_dir: Path, out_path: Path) -> int:
-    since = _latest_ts_in_jsonl(out_path)
+    latest_by_source = _latest_memory_write_ts_by_source(out_path)
     files = sorted(fabric_dir.glob("*.md"))
     written = 0
     with out_path.open("a", encoding="utf-8") as out:
@@ -133,11 +139,14 @@ def backfill(fabric_dir: Path, out_path: Path) -> int:
                 print(f"[backfill] skip {md.name}: {e}")
                 continue
             entry_ts = next((e.get("at") for e in events if e.get("type") == "memory.write"), None)
-            if since and entry_ts and entry_ts <= since:
+            last_seen = latest_by_source.get(str(md))
+            if last_seen and entry_ts and entry_ts <= last_seen:
                 continue
             for e in events:
                 out.write(json.dumps(e, ensure_ascii=False) + "\n")
                 written += 1
+            if entry_ts:
+                latest_by_source[str(md)] = str(entry_ts)
     return written
 
 
