@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "icarus-memory"
+version = "0.1.0"
+description = "Framework-agnostic agent memory with provenance and rollback"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "esaradev" }]
+keywords = ["agent", "memory", "llm", "mcp", "provenance", "rollback"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    "sentence-transformers>=3.0",
+    "numpy>=1.24",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+icarus-memory = "icarus_memory.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/esaradev/icarus-memory"
+Issues = "https://github.com/esaradev/icarus-memory/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/icarus_memory"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["sentence_transformers.*", "mcp.*", "yaml.*", "numpy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["src/icarus_memory"]
+omit = ["src/icarus_memory/_embeddings.py"]
