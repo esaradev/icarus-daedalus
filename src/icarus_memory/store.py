@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 ID_SUFFIX_BYTES = 6  # 12 hex chars -> 48 bits of entropy
 ID_COLLISION_RETRY = 8
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
+_FRONTMATTER_RE = re.compile(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n)?(.*)$", re.DOTALL)
 
 
 def _id_from_filename(name: str) -> str | None:
@@ -148,7 +148,7 @@ class MarkdownStore:
                 record["timestamp"] = _format_timestamp(ts)
 
         front = yaml.safe_dump(data, sort_keys=False, allow_unicode=True).strip()
-        return f"---\n{front}\n---\n\n{body}".rstrip() + "\n"
+        return f"---\n{front}\n---\n{body}"
 
     def _read(self, path: Path) -> Entry:
         try:
@@ -180,7 +180,7 @@ class MarkdownStore:
         known = set(Entry.model_fields.keys())
         data = {k: v for k, v in data.items() if k in known}
 
-        body = match.group(2).strip()
+        body = match.group(2)
         data["body"] = body
 
         try:

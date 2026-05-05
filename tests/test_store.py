@@ -59,6 +59,17 @@ def test_round_trip_full(fabric_root: Path) -> None:
     assert loaded == entry
 
 
+def test_round_trip_preserves_body_whitespace(fabric_root: Path) -> None:
+    store = MarkdownStore(fabric_root)
+    body = "\n  indented line\nline with trailing spaces  \n\n"
+    entry = _entry(store, body=body)
+
+    store.write(entry)
+    loaded = store.get(entry.id)
+
+    assert loaded.body == body
+
+
 def test_get_missing_raises(fabric_root: Path) -> None:
     store = MarkdownStore(fabric_root)
     with pytest.raises(EntryNotFound):
@@ -120,4 +131,4 @@ def test_lazy_migration_for_old_entries(fabric_root: Path) -> None:
     entry = store.get("icarus:aaaaaaaaaaaa")
     assert entry.verified == "unverified"
     assert entry.evidence == []
-    assert entry.body == "legacy body"
+    assert entry.body == "\nlegacy body\n"

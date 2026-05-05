@@ -19,6 +19,17 @@ def test_server_builds_and_registers_tools(fabric_root: Path, monkeypatch: pytes
     assert name == "icarus-memory" or name is None  # FastMCP sets this
 
 
+def test_server_builds_with_configured_http_port(fabric_root: Path) -> None:
+    pytest.importorskip("mcp")
+    from icarus_memory.mcp_server import build_server
+
+    server = build_server(root=fabric_root, port=8765)
+    settings = getattr(server, "settings", None)
+    if settings is None or not hasattr(settings, "port"):
+        pytest.skip("mcp SDK in this env does not expose FastMCP settings.port")
+    assert settings.port == 8765
+
+
 def test_serve_module_imports() -> None:
     pytest.importorskip("mcp")
     # Importing the module should not start the server.

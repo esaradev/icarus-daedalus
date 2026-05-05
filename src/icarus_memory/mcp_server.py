@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,7 +21,7 @@ def _plan_dict(plan: RollbackPlan) -> dict[str, Any]:
     return plan.model_dump(mode="json")
 
 
-def build_server(root: str | Path | None = None) -> Any:
+def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
     """Build a FastMCP server with all icarus-memory tools registered.
 
     The mcp SDK is imported lazily so that ``import icarus_memory`` stays
@@ -39,7 +38,7 @@ def build_server(root: str | Path | None = None) -> Any:
     from . import IcarusMemory
 
     memory = IcarusMemory(root=root)
-    mcp = FastMCP("icarus-memory")
+    mcp = FastMCP("icarus-memory", port=port)
 
     @mcp.tool()
     def memory_write(
@@ -151,8 +150,7 @@ def serve_stdio(root: str | Path | None = None) -> None:
 
 
 def serve_http(root: str | Path | None = None, port: int = 8765) -> None:
-    server = build_server(root)
-    os.environ.setdefault("FASTMCP_PORT", str(port))
+    server = build_server(root, port=port)
     server.run("streamable-http")
 
 
