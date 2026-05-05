@@ -10,6 +10,7 @@ from typing import Any, cast
 from .exceptions import (
     EntryNotFound,
     IcarusMemoryError,
+    IllegalStateTransition,
     RollbackError,
     StoreError,
     ValidationError,
@@ -30,6 +31,7 @@ from .schema import (
 )
 from .store import MarkdownStore
 from .validation import (
+    _check_transition,
     validate_bool,
     validate_entry_id,
     validate_evidence_input,
@@ -199,6 +201,7 @@ class IcarusMemory:
         if not isinstance(note, str):
             raise ValidationError("note must be a string")
         entry = self.store.get(entry_id)
+        _check_transition(entry, "verified")
         now = datetime.now(timezone.utc).replace(microsecond=0)
         entry.verified = "verified"
         entry.verification_log.append(
@@ -215,6 +218,7 @@ class IcarusMemory:
             raise ValidationError("self-contradiction not allowed")
         reason = validate_non_empty_string(reason, "reason")
         entry = self.store.get(entry_id)
+        _check_transition(entry, "contradicted")
         if not self.store.exists(contradicted_by):
             raise ValidationError(
                 f"contradicted_by points to nonexistent entry {contradicted_by}"
@@ -267,6 +271,7 @@ __all__ = [
     "EvidencePointer",
     "IcarusMemory",
     "IcarusMemoryError",
+    "IllegalStateTransition",
     "RecallHit",
     "RecallMode",
     "RollbackError",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .exceptions import ValidationError
+from .exceptions import IllegalStateTransition, ValidationError
 from .schema import Entry, EvidencePointer, VerifiedStatus
 from .store import MarkdownStore
 
@@ -19,6 +19,12 @@ VERIFIED_STATUSES: set[VerifiedStatus] = {
 }
 MAX_QUERY_LENGTH = 10000
 MAX_RECALL_K = 1000
+_LEGAL_TRANSITIONS: dict[VerifiedStatus, set[VerifiedStatus]] = {
+    "unverified": {"verified", "contradicted", "rolled_back"},
+    "verified": {"verified", "contradicted", "rolled_back"},
+    "contradicted": {"rolled_back"},
+    "rolled_back": set(),
+}
 
 
 def _type_name(value: object) -> str:
@@ -156,6 +162,26 @@ def validate_write_inputs(
         validate_entry_id(revises, "revises")
     validate_optional_string(source_tool, "source_tool")
     validate_string_list(artifact_paths, "artifact_paths")
+
+
+def _check_transition(current: Entry, target: VerifiedStatus) -> None:
+    from_state = current.verified
+    if from_state == target:
+        if target == "verified":
+            return
+        raise IllegalStateTransition(
+            entry_id=current.id,
+            from_state=from_state,
+            to_state=target,
+            reason=f"idempotent transition to {target} is not allowed",
+        )
+    if target not in _LEGAL_TRANSITIONS[from_state]:
+        raise IllegalStateTransition(
+            entry_id=current.id,
+            from_state=from_state,
+            to_state=target,
+            reason="transition is not allowed",
+        )
 
 
 def validate_for_write(entry: Entry, store: MarkdownStore, *, is_initial_write: bool) -> None:
