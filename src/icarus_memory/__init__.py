@@ -47,7 +47,7 @@ from .validation import (
     validate_write_inputs,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 DEFAULT_ROOT_ENV = "ICARUS_FABRIC_ROOT"
 DEFAULT_ROOT = "~/fabric"

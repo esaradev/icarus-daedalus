@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0]
+
+- Fixed public API input validation so malformed IDs, empty queries, invalid enum values,
+  non-boolean rollback flags, and self-contradictions raise typed `ValidationError`s.
+- Added `IllegalStateTransition` and a centralized verification state machine so
+  `contradicted` and `rolled_back` entries cannot be re-verified through `verify()`.
+- Made public `search()` and MCP `memory_search` taint-safe by default, with
+  `audit_search()` / `memory_audit_search` for explicit all-status audit retrieval.
+- Extended rollback plans with `tainted_descendants` and opt-in `cascade=True` rollback
+  for descendant quarantine.
+- Fixed MCP tool dispatch to reject unknown arguments instead of silently ignoring them.
+
 ## 0.1.0 (unreleased)
 
 Initial release.
