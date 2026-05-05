@@ -9,7 +9,7 @@ from .schema import Entry, EvidencePointer, VerifiedStatus
 from .store import MarkdownStore
 
 ENTRY_ID_PATTERN = re.compile(r"^icarus:[0-9a-f]{8,}$")
-RECALL_MODES = {"auto", "keyword", "embedding", "hybrid"}
+RECALL_MODES = {"auto", "keyword", "embedding", "embeddings", "hybrid"}
 STATUS_FILTERS = {"safe", "all", "verified_only"}
 VERIFIED_STATUSES: set[VerifiedStatus] = {
     "unverified",

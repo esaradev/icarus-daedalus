@@ -8,7 +8,7 @@ from typing import Literal
 from .schema import Entry, RecallHit, VerifiedStatus
 from .store import MarkdownStore
 
-RecallMode = Literal["auto", "keyword", "embedding", "hybrid"]
+RecallMode = Literal["auto", "keyword", "embedding", "embeddings", "hybrid"]
 StatusFilter = Literal["safe", "all", "verified_only"]
 
 _TOKEN_RE = re.compile(r"\w+")
@@ -182,11 +182,12 @@ def _keyword_rank(candidates: list[Entry], query: str) -> list[RecallHit]:
 def _should_use_hybrid(mode: RecallMode) -> bool:
     if mode == "keyword":
         return False
-    if mode in {"embedding", "hybrid"}:
+    if mode in {"embedding", "embeddings", "hybrid"}:
         try:
             import importlib
 
             importlib.import_module("icarus_memory._embeddings")
+            importlib.import_module("rank_bm25")
         except ImportError as exc:  # pragma: no cover - exercised only without extra
             raise RuntimeError(
                 "mode='hybrid' requires the [embeddings] extra"
@@ -197,6 +198,7 @@ def _should_use_hybrid(mode: RecallMode) -> bool:
         import importlib
 
         importlib.import_module("icarus_memory._embeddings")
+        importlib.import_module("rank_bm25")
     except ImportError:
         return False
     return True
@@ -205,11 +207,25 @@ def _should_use_hybrid(mode: RecallMode) -> bool:
 def _hybrid_rank(  # pragma: no cover - requires the optional [embeddings] extra
     store: MarkdownStore, candidates: list[Entry], query: str, model_name: str
 ) -> list[RecallHit]:
+    from rank_bm25 import BM25Okapi
+
     from . import _embeddings as emb
 
-    keyword_hits = _keyword_rank(candidates, query)
-    keyword_rank: dict[str, int] = {
-        hit.entry.id: i for i, hit in enumerate(keyword_hits)
+    tokenized_docs = [_tokens(f"{e.summary} {e.body}") for e in candidates]
+    qtokens = _tokens(query)
+    bm25 = BM25Okapi(tokenized_docs)
+    bm25_scores = bm25.get_scores(qtokens)
+    bm25_order = sorted(
+        range(len(candidates)), key=lambda i: float(bm25_scores[i]), reverse=True
+    )
+    bm25_rank: dict[str, int] = {
+        candidates[idx].id: rank
+        for rank, idx in enumerate(bm25_order)
+        if float(bm25_scores[idx]) > 0
+    }
+    bm25_matched_terms = {
+        entry.id: [t for t in qtokens if t in set(tokens)]
+        for entry, tokens in zip(candidates, tokenized_docs, strict=True)
     }
 
     texts = [f"{e.summary}\n\n{e.body}" for e in candidates]
@@ -236,12 +252,8 @@ def _hybrid_rank(  # pragma: no cover - requires the optional [embeddings] extra
 
     rrf_k = 60
     fused: dict[str, float] = {}
-    matched_terms: dict[str, list[str]] = {}
-    for hit in keyword_hits:
-        fused[hit.entry.id] = fused.get(hit.entry.id, 0.0) + 1.0 / (
-            rrf_k + keyword_rank[hit.entry.id]
-        )
-        matched_terms[hit.entry.id] = hit.matched_terms
+    for eid, rank in bm25_rank.items():
+        fused[eid] = fused.get(eid, 0.0) + 1.0 / (rrf_k + rank)
     for eid, rank in embedding_rank.items():
         fused[eid] = fused.get(eid, 0.0) + 1.0 / (rrf_k + rank)
 
@@ -252,7 +264,7 @@ def _hybrid_rank(  # pragma: no cover - requires the optional [embeddings] extra
             RecallHit(
                 entry=candidate_index[eid],
                 score=score,
-                matched_terms=matched_terms.get(eid, []),
+                matched_terms=bm25_matched_terms.get(eid, []),
             )
         )
     return out

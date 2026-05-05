@@ -30,6 +30,7 @@ dependencies = [
 [project.optional-dependencies]
 embeddings = [
     "sentence-transformers>=3.0",
+    "rank-bm25>=0.2.2",
     "numpy>=1.24",
 ]
 dev = [
@@ -66,7 +67,7 @@ warn_redundant_casts = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["sentence_transformers.*", "mcp.*", "yaml.*", "numpy.*"]
+module = ["sentence_transformers.*", "rank_bm25.*", "mcp.*", "yaml.*", "numpy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
