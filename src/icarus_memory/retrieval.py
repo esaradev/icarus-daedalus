@@ -8,7 +8,7 @@ from typing import Literal
 from .schema import Entry, RecallHit, VerifiedStatus
 from .store import MarkdownStore
 
-RecallMode = Literal["auto", "keyword", "hybrid"]
+RecallMode = Literal["auto", "keyword", "embedding", "hybrid"]
 
 _TOKEN_RE = re.compile(r"\w+")
 _VERIFIED_ORDER: dict[VerifiedStatus, int] = {
@@ -129,7 +129,7 @@ def _keyword_rank(candidates: list[Entry], query: str) -> list[RecallHit]:
 def _should_use_hybrid(mode: RecallMode) -> bool:
     if mode == "keyword":
         return False
-    if mode == "hybrid":
+    if mode in {"embedding", "hybrid"}:
         try:
             import importlib
 

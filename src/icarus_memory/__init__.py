@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .exceptions import (
     EntryNotFound,
@@ -29,7 +29,20 @@ from .schema import (
     VerifiedStatus,
 )
 from .store import MarkdownStore
-from .validation import validate_for_write
+from .validation import (
+    validate_bool,
+    validate_entry_id,
+    validate_evidence_input,
+    validate_for_write,
+    validate_k,
+    validate_mode,
+    validate_non_empty_string,
+    validate_optional_string,
+    validate_query,
+    validate_status_filter,
+    validate_verified_status,
+    validate_write_inputs,
+)
 
 __version__ = "0.1.0"
 
@@ -87,6 +100,26 @@ class IcarusMemory:
         source_tool: str | None = None,
         artifact_paths: list[str] | None = None,
     ) -> Entry:
+        validate_write_inputs(
+            agent=agent,
+            type=type,
+            summary=summary,
+            body=body,
+            platform=platform,
+            project_id=project_id,
+            session_id=session_id,
+            status=status,
+            assigned_to=assigned_to,
+            review_of=review_of,
+            revises=revises,
+            source_tool=source_tool,
+            artifact_paths=artifact_paths,
+        )
+        if timestamp is not None and not isinstance(timestamp, datetime):
+            raise ValidationError("timestamp must be a datetime")
+        if training_value not in {"high", "normal", "low"}:
+            raise ValidationError("training_value must be one of: high, low, normal")
+        validate_evidence_input(evidence)
         evidence_models = [
             ev if isinstance(ev, EvidencePointer) else EvidencePointer(**ev)
             for ev in (evidence or [])
@@ -114,7 +147,7 @@ class IcarusMemory:
         return self.store.write(entry)
 
     def get(self, entry_id: str) -> Entry:
-        return self.store.get(entry_id)
+        return self.store.get(validate_entry_id(entry_id))
 
     # -- Recall / search ------------------------------------------------
 
@@ -124,12 +157,22 @@ class IcarusMemory:
         *,
         k: int = 10,
         mode: RecallMode = "auto",
+        status_filter: str = "safe",
         min_verified: VerifiedStatus = "unverified",
         exclude_rolled_back: bool = True,
         agent: str | None = None,
         project_id: str | None = None,
         type: str | None = None,
     ) -> list[RecallHit]:
+        query = validate_query(query)
+        k = validate_k(k)
+        mode = cast(RecallMode, validate_mode(mode))
+        validate_status_filter(status_filter)
+        min_verified = validate_verified_status(min_verified)
+        exclude_rolled_back = validate_bool(exclude_rolled_back, "exclude_rolled_back")
+        agent = validate_optional_string(agent, "agent")
+        project_id = validate_optional_string(project_id, "project_id")
+        type = validate_optional_string(type, "type")
         return _recall(
             self.store,
             query,
@@ -143,12 +186,18 @@ class IcarusMemory:
             embedding_model=self.embedding_model,
         )
 
-    def search(self, query: str) -> list[Entry]:
+    def search(self, query: str, *, status_filter: str = "all") -> list[Entry]:
+        query = validate_query(query)
+        validate_status_filter(status_filter)
         return _keyword_search(self.store, query)
 
     # -- Verification ---------------------------------------------------
 
     def verify(self, entry_id: str, *, verifier: str = "manual", note: str = "") -> Entry:
+        entry_id = validate_entry_id(entry_id)
+        verifier = validate_non_empty_string(verifier, "verifier")
+        if not isinstance(note, str):
+            raise ValidationError("note must be a string")
         entry = self.store.get(entry_id)
         now = datetime.now(timezone.utc).replace(microsecond=0)
         entry.verified = "verified"
@@ -160,6 +209,11 @@ class IcarusMemory:
         return self.store.write(entry)
 
     def contradict(self, entry_id: str, *, contradicted_by: str, reason: str) -> Entry:
+        entry_id = validate_entry_id(entry_id)
+        contradicted_by = validate_entry_id(contradicted_by, "contradicted_by")
+        if entry_id == contradicted_by:
+            raise ValidationError("self-contradiction not allowed")
+        reason = validate_non_empty_string(reason, "reason")
         entry = self.store.get(entry_id)
         if not self.store.exists(contradicted_by):
             raise ValidationError(
@@ -181,7 +235,10 @@ class IcarusMemory:
 
     # -- Rollback / lineage --------------------------------------------
 
-    def rollback(self, entry_id: str, *, dry_run: bool = True) -> RollbackPlan:
+    def rollback(self, entry_id: str, *, dry_run: bool = True, cascade: bool = False) -> RollbackPlan:
+        entry_id = validate_entry_id(entry_id)
+        dry_run = validate_bool(dry_run, "dry_run")
+        validate_bool(cascade, "cascade")
         plan = plan_rollback(self.store, entry_id)
         if dry_run:
             return plan
@@ -190,14 +247,15 @@ class IcarusMemory:
         return apply_rollback(self.store, plan)
 
     def lineage(self, entry_id: str) -> list[Entry]:
-        return _lineage(self.store, entry_id)
+        return _lineage(self.store, validate_entry_id(entry_id))
 
-    def pending(self, agent: str | None = None) -> list[Entry]:
-        out = []
+    def pending(self, agent: str) -> list[Entry]:
+        agent = validate_non_empty_string(agent, "agent")
+        out: list[Entry] = []
         for entry in self.store.iter_entries():
             if entry.status != "open":
                 continue
-            if agent is not None and entry.assigned_to != agent:
+            if entry.assigned_to != agent:
                 continue
             out.append(entry)
         return out

@@ -137,8 +137,8 @@ def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
         return [_entry_dict(e) for e in memory.lineage(id)]
 
     @mcp.tool()
-    def memory_pending(agent: str | None = None) -> list[dict[str, Any]]:
-        """List entries with status='open', optionally filtered by assignee."""
+    def memory_pending(agent: str) -> list[dict[str, Any]]:
+        """List entries with status='open' filtered by assignee."""
         return [_entry_dict(e) for e in memory.pending(agent)]
 
     return mcp

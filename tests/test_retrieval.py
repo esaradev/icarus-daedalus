@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from icarus_memory import IcarusMemory
+from icarus_memory import IcarusMemory, ValidationError
 
 
 def _seed(mem: IcarusMemory) -> dict[str, str]:
@@ -66,7 +66,8 @@ def test_keyword_search(mem: IcarusMemory) -> None:
 
 def test_recall_empty_query_returns_nothing(mem: IcarusMemory) -> None:
     _seed(mem)
-    assert mem.recall("", mode="keyword") == []
+    with pytest.raises(ValidationError):
+        mem.recall("", mode="keyword")
 
 
 def test_recall_hybrid_without_extra_raises_clear_error(mem: IcarusMemory) -> None:
