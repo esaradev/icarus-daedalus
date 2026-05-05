@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -76,3 +78,39 @@ def test_cli_recall_smoke(tmp_path: Path) -> None:
         del os.environ["ICARUS_FABRIC_ROOT"]
     assert result.exit_code == 0
     assert "postgres" in result.output
+
+
+def test_mcp_tools_reject_unknown_arguments(tmp_path: Path) -> None:
+    pytest.importorskip("mcp")
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from icarus_memory.mcp_server import build_server
+
+    server = build_server(root=tmp_path / "fabric")
+    manager = getattr(server, "_tool_manager", None)
+    if manager is None or not hasattr(manager, "call_tool"):
+        pytest.skip("mcp SDK in this env does not expose tool_manager.call_tool")
+
+    payloads: dict[str, dict[str, Any]] = {
+        "memory_write": {"agent": "a", "type": "decision", "summary": "x"},
+        "memory_get": {"id": "icarus:000000000000"},
+        "memory_recall": {"query": "x"},
+        "memory_search": {"query": "x"},
+        "memory_audit_search": {"query": "x"},
+        "memory_verify": {"id": "icarus:000000000000"},
+        "memory_contradict": {
+            "id": "icarus:000000000000",
+            "contradicted_by": "icarus:000000000001",
+            "reason": "x",
+        },
+        "memory_rollback": {"id": "icarus:000000000000"},
+        "memory_lineage": {"id": "icarus:000000000000"},
+        "memory_pending": {"agent": "a"},
+    }
+
+    async def call_with_extra(name: str, payload: dict[str, Any]) -> None:
+        with pytest.raises(ToolError, match="unknown argument: bogus"):
+            await manager.call_tool(name, {**payload, "bogus": "x"})
+
+    for name, payload in payloads.items():
+        asyncio.run(call_with_extra(name, payload))

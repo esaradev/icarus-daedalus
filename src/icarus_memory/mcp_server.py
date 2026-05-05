@@ -21,6 +21,43 @@ def _plan_dict(plan: RollbackPlan) -> dict[str, Any]:
     return plan.model_dump(mode="json")
 
 
+def _install_unknown_argument_guard(server: Any) -> None:
+    manager = getattr(server, "_tool_manager", None)
+    if manager is None or not hasattr(manager, "call_tool"):
+        return
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    allowed_by_tool: dict[str, set[str]] = {}
+    if hasattr(manager, "list_tools"):
+        for tool in manager.list_tools():
+            params = getattr(tool, "parameters", {})
+            properties = params.get("properties", {}) if isinstance(params, dict) else {}
+            allowed_by_tool[getattr(tool, "name", "")] = set(properties)
+
+    original_call_tool = manager.call_tool
+
+    async def guarded_call_tool(
+        name: str,
+        arguments: dict[str, Any],
+        context: Any | None = None,
+        convert_result: bool = False,
+    ) -> Any:
+        allowed = allowed_by_tool.get(name)
+        if allowed is not None:
+            unknown = sorted(set(arguments) - allowed)
+            if unknown:
+                raise ToolError(f"unknown argument: {unknown[0]}")
+        return await original_call_tool(
+            name,
+            arguments,
+            context=context,
+            convert_result=convert_result,
+        )
+
+    manager.call_tool = guarded_call_tool
+
+
 def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
     """Build a FastMCP server with all icarus-memory tools registered.
 
@@ -151,6 +188,7 @@ def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
         """List entries with status='open' filtered by assignee."""
         return [_entry_dict(e) for e in memory.pending(agent)]
 
+    _install_unknown_argument_guard(mcp)
     return mcp
 
 
