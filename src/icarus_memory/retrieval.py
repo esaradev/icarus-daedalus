@@ -9,6 +9,7 @@ from .schema import Entry, RecallHit, VerifiedStatus
 from .store import MarkdownStore
 
 RecallMode = Literal["auto", "keyword", "embedding", "hybrid"]
+StatusFilter = Literal["safe", "all", "verified_only"]
 
 _TOKEN_RE = re.compile(r"\w+")
 _VERIFIED_ORDER: dict[VerifiedStatus, int] = {
@@ -32,15 +33,18 @@ def _tokens(text: str) -> list[str]:
 def _matches_filters(
     entry: Entry,
     *,
+    status_filter: StatusFilter,
     min_verified: VerifiedStatus,
     exclude_rolled_back: bool,
     agent: str | None,
     project_id: str | None,
     type: str | None,
 ) -> bool:
-    if exclude_rolled_back and entry.verified == "rolled_back":
+    if not _matches_status_filter(entry, status_filter):
         return False
-    if entry.verified not in _MIN_VERIFIED_THRESHOLD[min_verified]:
+    if status_filter != "all" and exclude_rolled_back and entry.verified == "rolled_back":
+        return False
+    if min_verified != "unverified" and entry.verified not in _MIN_VERIFIED_THRESHOLD[min_verified]:
         return False
     if agent is not None and entry.agent != agent:
         return False
@@ -49,7 +53,15 @@ def _matches_filters(
     return not (type is not None and entry.type != type)
 
 
-def keyword_search(store: MarkdownStore, query: str) -> list[Entry]:
+def _matches_status_filter(entry: Entry, status_filter: StatusFilter) -> bool:
+    if status_filter == "safe":
+        return entry.verified not in {"contradicted", "rolled_back"}
+    if status_filter == "verified_only":
+        return entry.verified == "verified"
+    return True
+
+
+def _raw_search(store: MarkdownStore, query: str) -> list[Entry]:
     """Raw substring search across summary + body."""
     needle = query.lower()
     out: list[Entry] = []
@@ -58,6 +70,45 @@ def keyword_search(store: MarkdownStore, query: str) -> list[Entry]:
         if needle in haystack:
             out.append(entry)
     return out
+
+
+def search(
+    store: MarkdownStore,
+    query: str,
+    *,
+    status_filter: StatusFilter = "safe",
+    agent: str | None = None,
+    project_id: str | None = None,
+    type: str | None = None,
+) -> list[Entry]:
+    """Substring search with tainted entries excluded by default."""
+    return [
+        entry
+        for entry in _raw_search(store, query)
+        if _matches_status_filter(entry, status_filter)
+        and (agent is None or entry.agent == agent)
+        and (project_id is None or entry.project_id == project_id)
+        and (type is None or entry.type == type)
+    ]
+
+
+def audit_search(
+    store: MarkdownStore,
+    query: str,
+    *,
+    agent: str | None = None,
+    project_id: str | None = None,
+    type: str | None = None,
+) -> list[Entry]:
+    """Raw audit search that includes contradicted and rolled-back entries."""
+    return search(
+        store,
+        query,
+        status_filter="all",
+        agent=agent,
+        project_id=project_id,
+        type=type,
+    )
 
 
 def _keyword_score(entry: Entry, query_tokens: list[str]) -> tuple[float, list[str]]:
@@ -80,6 +131,7 @@ def recall(
     *,
     k: int = 10,
     mode: RecallMode = "auto",
+    status_filter: StatusFilter = "safe",
     min_verified: VerifiedStatus = "unverified",
     exclude_rolled_back: bool = True,
     agent: str | None = None,
@@ -93,6 +145,7 @@ def recall(
         for e in store.iter_entries()
         if _matches_filters(
             e,
+            status_filter=status_filter,
             min_verified=min_verified,
             exclude_rolled_back=exclude_rolled_back,
             agent=agent,
@@ -205,4 +258,4 @@ def _hybrid_rank(  # pragma: no cover - requires the optional [embeddings] extra
     return out
 
 
-__all__ = ["RecallMode", "keyword_search", "recall"]
+__all__ = ["RecallMode", "StatusFilter", "_raw_search", "audit_search", "recall", "search"]

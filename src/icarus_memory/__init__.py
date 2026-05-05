@@ -16,9 +16,10 @@ from .exceptions import (
     ValidationError,
 )
 from .lineage import lineage as _lineage
-from .retrieval import RecallMode
-from .retrieval import keyword_search as _keyword_search
+from .retrieval import RecallMode, StatusFilter
+from .retrieval import audit_search as _audit_search
 from .retrieval import recall as _recall
+from .retrieval import search as _search
 from .rollback import apply_rollback, plan_rollback
 from .schema import (
     Entry,
@@ -159,7 +160,7 @@ class IcarusMemory:
         *,
         k: int = 10,
         mode: RecallMode = "auto",
-        status_filter: str = "safe",
+        status_filter: StatusFilter = "safe",
         min_verified: VerifiedStatus = "unverified",
         exclude_rolled_back: bool = True,
         agent: str | None = None,
@@ -180,6 +181,7 @@ class IcarusMemory:
             query,
             k=k,
             mode=mode,
+            status_filter=status_filter,
             min_verified=min_verified,
             exclude_rolled_back=exclude_rolled_back,
             agent=agent,
@@ -188,10 +190,48 @@ class IcarusMemory:
             embedding_model=self.embedding_model,
         )
 
-    def search(self, query: str, *, status_filter: str = "all") -> list[Entry]:
+    def search(
+        self,
+        query: str,
+        *,
+        status_filter: StatusFilter = "safe",
+        agent: str | None = None,
+        project_id: str | None = None,
+        type: str | None = None,
+    ) -> list[Entry]:
         query = validate_query(query)
-        validate_status_filter(status_filter)
-        return _keyword_search(self.store, query)
+        status_filter = cast(StatusFilter, validate_status_filter(status_filter))
+        agent = validate_optional_string(agent, "agent")
+        project_id = validate_optional_string(project_id, "project_id")
+        type = validate_optional_string(type, "type")
+        return _search(
+            self.store,
+            query,
+            status_filter=status_filter,
+            agent=agent,
+            project_id=project_id,
+            type=type,
+        )
+
+    def audit_search(
+        self,
+        query: str,
+        *,
+        agent: str | None = None,
+        project_id: str | None = None,
+        type: str | None = None,
+    ) -> list[Entry]:
+        query = validate_query(query)
+        agent = validate_optional_string(agent, "agent")
+        project_id = validate_optional_string(project_id, "project_id")
+        type = validate_optional_string(type, "type")
+        return _audit_search(
+            self.store,
+            query,
+            agent=agent,
+            project_id=project_id,
+            type=type,
+        )
 
     # -- Verification ---------------------------------------------------
 
@@ -276,6 +316,7 @@ __all__ = [
     "RecallMode",
     "RollbackError",
     "RollbackPlan",
+    "StatusFilter",
     "StoreError",
     "TrainingValue",
     "ValidationError",

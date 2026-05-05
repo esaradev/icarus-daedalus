@@ -85,7 +85,8 @@ def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
     def memory_recall(
         query: str,
         k: int = 10,
-        mode: Literal["auto", "keyword", "hybrid"] = "auto",
+        mode: Literal["auto", "keyword", "embedding", "hybrid"] = "auto",
+        status_filter: Literal["safe", "all", "verified_only"] = "safe",
         min_verified: Literal[
             "unverified", "verified", "contradicted", "rolled_back"
         ] = "unverified",
@@ -99,6 +100,7 @@ def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
             query,
             k=k,
             mode=mode,
+            status_filter=status_filter,
             min_verified=min_verified,
             exclude_rolled_back=exclude_rolled_back,
             agent=agent,
@@ -108,9 +110,17 @@ def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
         return [_hit_dict(h) for h in hits]
 
     @mcp.tool()
-    def memory_search(query: str) -> list[dict[str, Any]]:
-        """Substring grep across entry summary and body."""
-        return [_entry_dict(e) for e in memory.search(query)]
+    def memory_search(
+        query: str,
+        status_filter: Literal["safe", "all", "verified_only"] = "safe",
+    ) -> list[dict[str, Any]]:
+        """Substring search; excludes contradicted and rolled-back entries by default."""
+        return [_entry_dict(e) for e in memory.search(query, status_filter=status_filter)]
+
+    @mcp.tool()
+    def memory_audit_search(query: str) -> list[dict[str, Any]]:
+        """Audit-only substring search that includes tainted entries."""
+        return [_entry_dict(e) for e in memory.audit_search(query)]
 
     @mcp.tool()
     def memory_verify(id: str, verifier: str = "manual", note: str = "") -> dict[str, Any]:
