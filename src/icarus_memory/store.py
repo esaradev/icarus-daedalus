@@ -65,6 +65,7 @@ class MarkdownStore:
     def __init__(self, root: str | Path):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self._reverse_revises_cache: dict[str, list[str]] | None = None
 
     # -- ID generation --------------------------------------------------
 
@@ -111,6 +112,7 @@ class MarkdownStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         text = self._serialize(entry)
         self._atomic_write(path, text)
+        self._reverse_revises_cache = None
         return entry
 
     def iter_entries(self) -> Iterator[Entry]:

@@ -5,8 +5,20 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .exceptions import EntryNotFound, RollbackError
+from .lineage import _find_descendants
 from .schema import Entry, RollbackPlan, VerificationRecord
 from .store import MarkdownStore
+from .validation import _check_transition
+
+
+def _with_descendants(store: MarkdownStore, plan: RollbackPlan) -> RollbackPlan:
+    result = _find_descendants(store, plan.intermediate)
+    return plan.model_copy(
+        update={
+            "tainted_descendants": result.descendants,
+            "warnings": [*plan.warnings, *result.warnings],
+        }
+    )
 
 
 def plan_rollback(store: MarkdownStore, entry_id: str) -> RollbackPlan:
@@ -17,9 +29,12 @@ def plan_rollback(store: MarkdownStore, entry_id: str) -> RollbackPlan:
         raise RollbackError(str(exc)) from exc
 
     if target.verified == "verified":
-        return RollbackPlan(
-            target=entry_id,
-            error="target is already verified; nothing to roll back",
+        return _with_descendants(
+            store,
+            RollbackPlan(
+                target=entry_id,
+                error="target is already verified; nothing to roll back",
+            ),
         )
 
     intermediate: list[str] = []
@@ -30,17 +45,26 @@ def plan_rollback(store: MarkdownStore, entry_id: str) -> RollbackPlan:
     intermediate.append(current.id)
     while current.revises:
         if current.revises in seen:
-            raise RollbackError(
-                f"cycle detected in revises chain at {current.revises}"
+            return _with_descendants(
+                store,
+                RollbackPlan(
+                    target=entry_id,
+                    intermediate=list(reversed(intermediate)),
+                    error=f"cycle detected in revises chain at {current.revises}",
+                    warnings=[f"cycle detected in revises chain at {current.revises}"],
+                ),
             )
         seen.add(current.revises)
         try:
             current = store.get(current.revises)
         except EntryNotFound:
-            return RollbackPlan(
-                target=entry_id,
-                intermediate=intermediate,
-                error=f"revises chain broken: {current.revises} not found",
+            return _with_descendants(
+                store,
+                RollbackPlan(
+                    target=entry_id,
+                    intermediate=list(reversed(intermediate)),
+                    error=f"revises chain broken: {current.revises} not found",
+                ),
             )
         if current.verified == "verified":
             verified_ancestor = current
@@ -48,20 +72,26 @@ def plan_rollback(store: MarkdownStore, entry_id: str) -> RollbackPlan:
         intermediate.append(current.id)
 
     if verified_ancestor is None:
-        return RollbackPlan(
-            target=entry_id,
-            intermediate=intermediate,
-            error="no verified ancestor in revises chain",
+        return _with_descendants(
+            store,
+            RollbackPlan(
+                target=entry_id,
+                intermediate=list(reversed(intermediate)),
+                error="no verified ancestor in revises chain",
+            ),
         )
 
-    return RollbackPlan(
-        target=entry_id,
-        verified_ancestor=verified_ancestor.id,
-        intermediate=intermediate,
+    return _with_descendants(
+        store,
+        RollbackPlan(
+            target=entry_id,
+            verified_ancestor=verified_ancestor.id,
+            intermediate=list(reversed(intermediate)),
+        ),
     )
 
 
-def apply_rollback(store: MarkdownStore, plan: RollbackPlan) -> RollbackPlan:
+def apply_rollback(store: MarkdownStore, plan: RollbackPlan, *, cascade: bool = False) -> RollbackPlan:
     """Apply a previously-computed rollback plan. Non-destructive.
 
     Marks every intermediate entry ``verified='rolled_back'`` and writes a
@@ -77,6 +107,7 @@ def apply_rollback(store: MarkdownStore, plan: RollbackPlan) -> RollbackPlan:
 
     for intermediate_id in plan.intermediate:
         entry = store.get(intermediate_id)
+        _check_transition(entry, "rolled_back")
         entry.verified = "rolled_back"
         entry.verification_log.append(
             VerificationRecord(
@@ -87,6 +118,21 @@ def apply_rollback(store: MarkdownStore, plan: RollbackPlan) -> RollbackPlan:
             )
         )
         store.write(entry)
+
+    if cascade:
+        for descendant_id in plan.tainted_descendants:
+            entry = store.get(descendant_id)
+            _check_transition(entry, "rolled_back")
+            entry.verified = "rolled_back"
+            entry.verification_log.append(
+                VerificationRecord(
+                    verifier="rollback",
+                    timestamp=now,
+                    status="rolled_back",
+                    note=f"cascaded from rollback of {plan.target}",
+                )
+            )
+            store.write(entry)
 
     rollback_entry_id = store.generate_id()
     rollback_entry = Entry(
@@ -101,6 +147,7 @@ def apply_rollback(store: MarkdownStore, plan: RollbackPlan) -> RollbackPlan:
             f"{plan.verified_ancestor}.\n\n"
             f"Intermediate entries marked rolled_back: "
             f"{', '.join(plan.intermediate)}\n"
+            f"Tainted descendants: {', '.join(plan.tainted_descendants)}\n"
         ),
         revises=plan.verified_ancestor,
     )

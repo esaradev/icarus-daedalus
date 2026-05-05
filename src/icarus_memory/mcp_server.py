@@ -137,9 +137,9 @@ def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:
         )
 
     @mcp.tool()
-    def memory_rollback(id: str, dry_run: bool = True) -> dict[str, Any]:
+    def memory_rollback(id: str, dry_run: bool = True, cascade: bool = False) -> dict[str, Any]:
         """Plan or apply a rollback to the last verified ancestor."""
-        return _plan_dict(memory.rollback(id, dry_run=dry_run))
+        return _plan_dict(memory.rollback(id, dry_run=dry_run, cascade=cascade))
 
     @mcp.tool()
     def memory_lineage(id: str) -> list[dict[str, Any]]:

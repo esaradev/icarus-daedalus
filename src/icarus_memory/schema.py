@@ -88,6 +88,8 @@ class RollbackPlan(BaseModel):
     target: EntryId
     verified_ancestor: EntryId | None = None
     intermediate: list[EntryId] = Field(default_factory=list)
+    tainted_descendants: list[EntryId] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     error: str | None = None
     applied: bool = False
     rollback_entry_id: EntryId | None = None

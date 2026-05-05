@@ -288,7 +288,7 @@ class IcarusMemory:
             return plan
         if plan.error:
             raise RollbackError(plan.error)
-        return apply_rollback(self.store, plan)
+        return apply_rollback(self.store, plan, cascade=cascade)
 
     def lineage(self, entry_id: str) -> list[Entry]:
         return _lineage(self.store, validate_entry_id(entry_id))
