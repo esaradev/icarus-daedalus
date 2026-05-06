@@ -176,6 +176,8 @@ class MarkdownStore:
         data.setdefault("artifact_paths", [])
         data.setdefault("verification_log", [])
         data.setdefault("training_value", "normal")
+        data.setdefault("lifecycle", "active")
+        data.setdefault("supersedes", [])
 
         # Drop unknown keys so older fabrics with stray fields still load.
         # (pydantic Entry has extra='forbid'.)

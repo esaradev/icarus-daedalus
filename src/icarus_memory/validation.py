@@ -225,3 +225,14 @@ def validate_for_write(entry: Entry, store: MarkdownStore, *, is_initial_write: 
             raise ValidationError(
                 f"evidence[{i}].ref points to nonexistent entry {ev.ref}"
             )
+
+    if entry.superseded_by is not None and not store.exists(entry.superseded_by):
+        raise ValidationError(
+            f"superseded_by points to nonexistent entry {entry.superseded_by}"
+        )
+
+    for i, sup_id in enumerate(entry.supersedes):
+        if not store.exists(sup_id):
+            raise ValidationError(
+                f"supersedes[{i}] points to nonexistent entry {sup_id}"
+            )

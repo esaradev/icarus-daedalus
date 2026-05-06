@@ -24,6 +24,7 @@ from .rollback import apply_rollback, plan_rollback
 from .schema import (
     Entry,
     EvidencePointer,
+    Lifecycle,
     RecallHit,
     RollbackPlan,
     TrainingValue,
@@ -102,6 +103,7 @@ class IcarusMemory:
         evidence: list[dict[str, Any]] | list[EvidencePointer] | None = None,
         source_tool: str | None = None,
         artifact_paths: list[str] | None = None,
+        supersedes: list[str] | None = None,
     ) -> Entry:
         validate_write_inputs(
             agent=agent,
@@ -123,6 +125,11 @@ class IcarusMemory:
         if training_value not in {"high", "normal", "low"}:
             raise ValidationError("training_value must be one of: high, low, normal")
         validate_evidence_input(evidence)
+        if supersedes is not None:
+            if not isinstance(supersedes, list):
+                raise ValidationError("supersedes must be a list of entry ids")
+            for sid in supersedes:
+                validate_entry_id(sid, "supersedes[]")
         evidence_models = [
             ev if isinstance(ev, EvidencePointer) else EvidencePointer(**ev)
             for ev in (evidence or [])
@@ -145,9 +152,80 @@ class IcarusMemory:
             evidence=evidence_models,
             source_tool=source_tool,
             artifact_paths=artifact_paths or [],
+            supersedes=supersedes or [],
         )
         validate_for_write(entry, self.store, is_initial_write=True)
         return self.store.write(entry)
+
+    def write_with_supersession(
+        self,
+        *,
+        agent: str,
+        type: str,
+        summary: str,
+        body: str = "",
+        supersedes_ids: list[str],
+        platform: str | None = None,
+        timestamp: datetime | None = None,
+        project_id: str | None = None,
+        session_id: str | None = None,
+        status: str | None = None,
+        assigned_to: str | None = None,
+        review_of: str | None = None,
+        revises: str | None = None,
+        training_value: TrainingValue = "normal",
+        evidence: list[dict[str, Any]] | list[EvidencePointer] | None = None,
+        source_tool: str | None = None,
+        artifact_paths: list[str] | None = None,
+    ) -> Entry:
+        """Write a new entry that supersedes one or more existing entries.
+
+        Validates that every supersedes_id exists *before* any disk writes
+        happen — if validation fails, no entries are created or modified.
+        Once validation passes, the new entry is written first; then each
+        old entry is mutated to set lifecycle="superseded" and
+        superseded_by=<new_entry.id>. Bodies and verification history of
+        the old entries are preserved for audit.
+        """
+        if not isinstance(supersedes_ids, list) or not supersedes_ids:
+            raise ValidationError("supersedes_ids must be a non-empty list of entry ids")
+        for sid in supersedes_ids:
+            validate_entry_id(sid, "supersedes_ids[]")
+        # Fail-fast existence check across all targets before any write.
+        missing = [sid for sid in supersedes_ids if not self.store.exists(sid)]
+        if missing:
+            raise ValidationError(
+                f"supersedes_ids reference nonexistent entries: {missing}"
+            )
+
+        new_entry = self.write(
+            agent=agent,
+            type=type,
+            summary=summary,
+            body=body,
+            platform=platform,
+            timestamp=timestamp,
+            project_id=project_id,
+            session_id=session_id,
+            status=status,
+            assigned_to=assigned_to,
+            review_of=review_of,
+            revises=revises,
+            training_value=training_value,
+            evidence=evidence,
+            source_tool=source_tool,
+            artifact_paths=artifact_paths,
+            supersedes=supersedes_ids,
+        )
+
+        for old_id in supersedes_ids:
+            old = self.store.get(old_id)
+            old.lifecycle = "superseded"
+            old.superseded_by = new_entry.id
+            validate_for_write(old, self.store, is_initial_write=False)
+            self.store.write(old)
+
+        return new_entry
 
     def get(self, entry_id: str) -> Entry:
         return self.store.get(validate_entry_id(entry_id))
@@ -166,6 +244,7 @@ class IcarusMemory:
         agent: str | None = None,
         project_id: str | None = None,
         type: str | None = None,
+        include_superseded: bool = False,
     ) -> list[RecallHit]:
         query = validate_query(query)
         k = validate_k(k)
@@ -173,6 +252,7 @@ class IcarusMemory:
         validate_status_filter(status_filter)
         min_verified = validate_verified_status(min_verified)
         exclude_rolled_back = validate_bool(exclude_rolled_back, "exclude_rolled_back")
+        include_superseded = validate_bool(include_superseded, "include_superseded")
         agent = validate_optional_string(agent, "agent")
         project_id = validate_optional_string(project_id, "project_id")
         type = validate_optional_string(type, "type")
@@ -184,6 +264,7 @@ class IcarusMemory:
             status_filter=status_filter,
             min_verified=min_verified,
             exclude_rolled_back=exclude_rolled_back,
+            include_superseded=include_superseded,
             agent=agent,
             project_id=project_id,
             type=type,
@@ -198,9 +279,11 @@ class IcarusMemory:
         agent: str | None = None,
         project_id: str | None = None,
         type: str | None = None,
+        include_superseded: bool = False,
     ) -> list[Entry]:
         query = validate_query(query)
         status_filter = cast(StatusFilter, validate_status_filter(status_filter))
+        include_superseded = validate_bool(include_superseded, "include_superseded")
         agent = validate_optional_string(agent, "agent")
         project_id = validate_optional_string(project_id, "project_id")
         type = validate_optional_string(type, "type")
@@ -208,6 +291,7 @@ class IcarusMemory:
             self.store,
             query,
             status_filter=status_filter,
+            include_superseded=include_superseded,
             agent=agent,
             project_id=project_id,
             type=type,
@@ -312,6 +396,7 @@ __all__ = [
     "IcarusMemory",
     "IcarusMemoryError",
     "IllegalStateTransition",
+    "Lifecycle",
     "RecallHit",
     "RecallMode",
     "RollbackError",

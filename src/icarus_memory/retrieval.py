@@ -36,6 +36,7 @@ def _matches_filters(
     status_filter: StatusFilter,
     min_verified: VerifiedStatus,
     exclude_rolled_back: bool,
+    include_superseded: bool,
     agent: str | None,
     project_id: str | None,
     type: str | None,
@@ -43,6 +44,8 @@ def _matches_filters(
     if not _matches_status_filter(entry, status_filter):
         return False
     if status_filter != "all" and exclude_rolled_back and entry.verified == "rolled_back":
+        return False
+    if not include_superseded and entry.lifecycle == "superseded":
         return False
     if min_verified != "unverified" and entry.verified not in _MIN_VERIFIED_THRESHOLD[min_verified]:
         return False
@@ -77,15 +80,17 @@ def search(
     query: str,
     *,
     status_filter: StatusFilter = "safe",
+    include_superseded: bool = False,
     agent: str | None = None,
     project_id: str | None = None,
     type: str | None = None,
 ) -> list[Entry]:
-    """Substring search with tainted entries excluded by default."""
+    """Substring search with tainted and superseded entries excluded by default."""
     return [
         entry
         for entry in _raw_search(store, query)
         if _matches_status_filter(entry, status_filter)
+        and (include_superseded or entry.lifecycle != "superseded")
         and (agent is None or entry.agent == agent)
         and (project_id is None or entry.project_id == project_id)
         and (type is None or entry.type == type)
@@ -100,11 +105,12 @@ def audit_search(
     project_id: str | None = None,
     type: str | None = None,
 ) -> list[Entry]:
-    """Raw audit search that includes contradicted and rolled-back entries."""
+    """Raw audit search that includes contradicted, rolled-back, and superseded entries."""
     return search(
         store,
         query,
         status_filter="all",
+        include_superseded=True,
         agent=agent,
         project_id=project_id,
         type=type,
@@ -134,12 +140,13 @@ def recall(
     status_filter: StatusFilter = "safe",
     min_verified: VerifiedStatus = "unverified",
     exclude_rolled_back: bool = True,
+    include_superseded: bool = False,
     agent: str | None = None,
     project_id: str | None = None,
     type: str | None = None,
     embedding_model: str = "BAAI/bge-small-en-v1.5",
 ) -> list[RecallHit]:
-    """Ranked recall with verified-status filtering and ordering."""
+    """Ranked recall with verified-status and lifecycle filtering."""
     candidates = [
         e
         for e in store.iter_entries()
@@ -148,6 +155,7 @@ def recall(
             status_filter=status_filter,
             min_verified=min_verified,
             exclude_rolled_back=exclude_rolled_back,
+            include_superseded=include_superseded,
             agent=agent,
             project_id=project_id,
             type=type,

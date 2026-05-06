@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 EvidenceKind = Literal["file", "url", "fabric_ref", "tool_output", "message"]
 VerifiedStatus = Literal["unverified", "verified", "contradicted", "rolled_back"]
+# Lifecycle is orthogonal to verified: verified is about provenance/trust,
+# lifecycle is about freshness. A fact can be unverified-and-active or
+# verified-and-superseded. They live in separate fields so callers can
+# combine them without overloading either.
+Lifecycle = Literal["active", "superseded"]
 TrainingValue = Literal["high", "normal", "low"]
 EntryStatus = Literal["open", "in-progress", "closed"]
 
@@ -74,6 +79,10 @@ class Entry(BaseModel):
     artifact_paths: list[str] = Field(default_factory=list)
     verification_log: list[VerificationRecord] = Field(default_factory=list)
 
+    lifecycle: Lifecycle = "active"
+    superseded_by: EntryId | None = None
+    supersedes: list[EntryId] = Field(default_factory=list)
+
     @field_validator("timestamp")
     @classmethod
     def _ensure_utc(cls, v: datetime) -> datetime:
@@ -110,6 +119,7 @@ __all__ = [
     "EntryStatus",
     "EvidenceKind",
     "EvidencePointer",
+    "Lifecycle",
     "RecallHit",
     "RollbackPlan",
     "TrainingValue",
