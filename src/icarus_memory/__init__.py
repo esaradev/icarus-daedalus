@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from .briefing import Briefing, BriefingGenerator
 from .exceptions import (
     EntryNotFound,
     IcarusMemoryError,
@@ -31,6 +33,7 @@ from .schema import (
     VerificationRecord,
     VerifiedStatus,
 )
+from .session_archive import ArchivedSession, SessionArchive
 from .store import MarkdownStore
 from .validation import (
     _check_transition,
@@ -47,6 +50,8 @@ from .validation import (
     validate_verified_status,
     validate_write_inputs,
 )
+from .wiki import PageType, WikiManager, WikiPage
+from .working_memory import WorkingMemory
 
 __version__ = "0.2.0"
 
@@ -81,6 +86,11 @@ class IcarusMemory:
         self.store = MarkdownStore(self.root)
         self.embedding_model = embedding_model
         self.platform = platform
+        self.wiki = WikiManager(self.root, memory=self)
+        self.archive = SessionArchive(self.root)
+        self.briefings = BriefingGenerator(
+            self.root, wiki=self.wiki, archive=self.archive, memory=self
+        )
 
     # -- Write / read ---------------------------------------------------
 
@@ -155,7 +165,9 @@ class IcarusMemory:
             supersedes=supersedes or [],
         )
         validate_for_write(entry, self.store, is_initial_write=True)
-        return self.store.write(entry)
+        written = self.store.write(entry)
+        self._classify_wiki_after_write(written)
+        return written
 
     def write_with_supersession(
         self,
@@ -388,8 +400,101 @@ class IcarusMemory:
             out.append(entry)
         return out
 
+    # -- Three-layer memory --------------------------------------------
+
+    def start_session(
+        self, agent_id: str, task_description: str
+    ) -> tuple[WorkingMemory, Briefing]:
+        """Start an active working-memory session and return its task briefing."""
+        agent_id = validate_non_empty_string(agent_id, "agent_id")
+        task_description = validate_non_empty_string(task_description, "task_description")
+        session_id = secrets.token_hex(8)
+        working = WorkingMemory.start(
+            self.root,
+            agent_id=agent_id,
+            session_id=session_id,
+            task_description=task_description,
+        )
+        return working, self.get_briefing(agent_id, task_description)
+
+    def end_session(
+        self,
+        working_memory: WorkingMemory,
+        summary: str,
+        promote_to_wiki: list[str] | None = None,
+    ) -> ArchivedSession:
+        """Archive a working session and optionally promote a summary to wiki pages."""
+        summary = validate_non_empty_string(summary, "summary")
+        pages = [self._validate_page_path_for_public(path) for path in (promote_to_wiki or [])]
+        archived = self.archive.archive(
+            working_memory, final_summary=summary, promoted_to_wiki=pages
+        )
+        for page_path in pages:
+            body = _session_summary_body(archived)
+            entry = self.write(
+                agent=archived.agent_id,
+                type="session_summary",
+                summary=summary[:200],
+                body=body,
+                session_id=archived.session_id,
+                training_value="high",
+                evidence=[
+                    {
+                        "kind": "tool_output",
+                        "ref": archived.ref,
+                        "excerpt": archived.final_summary[:500],
+                    }
+                ],
+                source_tool="session_archive",
+            )
+            self.wiki.add_entry(page_path, entry.id, page_type="decision")
+        return archived
+
+    def get_briefing(self, agent_id: str, task_description: str) -> Briefing:
+        """Return a cached or freshly generated task briefing for an agent."""
+        agent_id = validate_non_empty_string(agent_id, "agent_id")
+        task_description = validate_non_empty_string(task_description, "task_description")
+        return self.briefings.generate(agent_id=agent_id, task_description=task_description)
+
+    def get_wiki_page(self, path: str) -> WikiPage | None:
+        """Return a wiki page by path, or ``None`` if it does not exist."""
+        return self.wiki.get_page(path)
+
+    def search_wiki(self, query: str) -> list[WikiPage]:
+        """Search wiki pages by Entry recall matches."""
+        query = validate_query(query)
+        return self.wiki.search_pages(query)
+
+    def _classify_wiki_after_write(self, entry: Entry) -> None:
+        try:
+            self.wiki.classify_and_add(entry)
+        except Exception:
+            # Wiki classification is advisory; the Entry write is the source of truth.
+            return
+
+    @staticmethod
+    def _validate_page_path_for_public(path: str) -> str:
+        from ._layers import safe_page_path
+
+        return safe_page_path(path)
+
+
+def _session_summary_body(archived: ArchivedSession) -> str:
+    attempts = "\n".join(
+        f"- {'success' if attempt.succeeded else 'failed'}: {attempt.text}"
+        for attempt in archived.attempts
+    )
+    return (
+        f"Archived session: {archived.ref}\n\n"
+        f"Task: {archived.task_description}\n\n"
+        f"Summary: {archived.final_summary}\n\n"
+        f"Key attempts:\n{attempts or '- none'}\n"
+    )
+
 
 __all__ = [
+    "ArchivedSession",
+    "Briefing",
     "Entry",
     "EntryNotFound",
     "EvidencePointer",
@@ -397,15 +502,20 @@ __all__ = [
     "IcarusMemoryError",
     "IllegalStateTransition",
     "Lifecycle",
+    "PageType",
     "RecallHit",
     "RecallMode",
     "RollbackError",
     "RollbackPlan",
+    "SessionArchive",
     "StatusFilter",
     "StoreError",
     "TrainingValue",
     "ValidationError",
     "VerificationRecord",
     "VerifiedStatus",
+    "WikiManager",
+    "WikiPage",
+    "WorkingMemory",
     "__version__",
 ]

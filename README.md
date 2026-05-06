@@ -59,6 +59,38 @@ for hit in mem.recall("database choice", k=5, mode="keyword"):
     print(hit.entry.id, hit.entry.summary)
 ```
 
+## Three-layer agent loop
+
+v0.3 adds working memory, per-agent session archives, wiki pages, and task briefings
+without changing the Entry substrate:
+
+```python
+from icarus_memory import IcarusMemory
+
+mem = IcarusMemory(root="~/fabric")
+
+working, briefing = mem.start_session("builder", "fix auth bug")
+print(briefing.content)
+
+working.add_observation("Login redirect loses the session cookie")
+working.add_attempt("Regenerated OAuth client secret", succeeded=False)
+working.add_hypothesis("Callback and app domains disagree", confidence=0.9)
+
+archive = mem.end_session(
+    working,
+    "Auth fix is to pin the callback cookie domain",
+    promote_to_wiki=["decisions/auth-strategy"],
+)
+
+page = mem.get_wiki_page("decisions/auth-strategy")
+assert page is not None
+print(archive.ref, page.entries)
+```
+
+Session archives are private to the same agent during briefing generation. Promoted
+wiki entries are shared across agents because they become normal provenance-backed
+Entry records linked from `.icarus/wiki`.
+
 ## MCP integration
 
 ```bash
