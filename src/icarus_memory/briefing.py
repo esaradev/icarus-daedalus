@@ -160,8 +160,16 @@ class BriefingGenerator:
             entry
             for entry in entries
             if entry.lifecycle == "superseded"
-            and entry.timestamp.astimezone(timezone.utc) >= cutoff
+            and self._supersession_time(entry).astimezone(timezone.utc) >= cutoff
         ][:10]
+
+    def _supersession_time(self, entry: Entry) -> datetime:
+        if entry.superseded_by is None:
+            return entry.timestamp
+        try:
+            return self.memory.store.get(entry.superseded_by).timestamp
+        except Exception:
+            return entry.timestamp
 
 
 def _briefing_prompt(

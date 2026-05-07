@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from icarus_memory import IcarusMemory
 
 
@@ -32,3 +34,23 @@ def test_briefing_includes_same_agent_failed_attempts(mem: IcarusMemory) -> None
 
     assert "Rotating secrets did not fix redirects" in briefing.content
     assert "session_archive:agentA:" in " ".join(briefing.source_ids)
+
+
+def test_briefing_recent_superseded_uses_supersession_time(mem: IcarusMemory) -> None:
+    old = mem.write(
+        agent="agentA",
+        type="decision",
+        summary="Use legacy auth state",
+        timestamp=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+    mem.write_with_supersession(
+        agent="agentA",
+        type="decision",
+        summary="Use current auth state",
+        supersedes_ids=[old.id],
+    )
+
+    briefing = mem.get_briefing("agentA", "auth state")
+
+    assert old.id in briefing.source_ids
+    assert "Use legacy auth state" in briefing.content
