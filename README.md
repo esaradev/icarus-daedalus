@@ -19,8 +19,10 @@ Icarus gives agents a shared, versioned source of truth. Every fact has a source
 ## Install
 
 ```bash
-pip install icarus-memory
+pip install git+https://github.com/esaradev/icarus-memory-infra
 ```
+
+PyPI release pending. Requires Python 3.10+.
 
 ## Quick example
 
