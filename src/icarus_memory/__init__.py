@@ -54,7 +54,7 @@ from .validation import (
 from .wiki import PageType, WikiManager, WikiPage
 from .working_memory import WorkingMemory
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 DEFAULT_ROOT_ENV = "ICARUS_FABRIC_ROOT"
 DEFAULT_ROOT = "~/fabric"
