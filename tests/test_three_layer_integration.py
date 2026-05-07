@@ -18,11 +18,14 @@ def test_three_layer_agent_flow_and_privacy(mem: IcarusMemory) -> None:
     )
 
     page = mem.get_wiki_page("decisions/auth-strategy")
+    uncategorized = mem.get_wiki_page("uncategorized")
     assert page is not None
     assert page.entries
     promoted_entry = mem.get(page.entries[-1])
     assert promoted_entry.source_tool == "session_archive"
     assert promoted_entry.evidence[0].ref == archived.ref
+    if uncategorized is not None:
+        assert promoted_entry.id not in uncategorized.entries
 
     later = mem.get_briefing("agentA", "fix auth bug cookie")
     assert "decisions/auth-strategy" in later.page_paths

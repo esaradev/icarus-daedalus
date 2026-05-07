@@ -436,23 +436,7 @@ class IcarusMemory:
             working_memory, final_summary=summary, promoted_to_wiki=pages
         )
         for page_path in pages:
-            body = _session_summary_body(archived)
-            entry = self.write(
-                agent=archived.agent_id,
-                type="session_summary",
-                summary=summary[:200],
-                body=body,
-                session_id=archived.session_id,
-                training_value="high",
-                evidence=[
-                    {
-                        "kind": "tool_output",
-                        "ref": archived.ref,
-                        "excerpt": archived.final_summary[:500],
-                    }
-                ],
-                source_tool="session_archive",
-            )
+            entry = self._write_promoted_session_summary(archived, summary)
             self.wiki.add_entry(page_path, entry.id, page_type="decision")
         return archived
 
@@ -489,6 +473,29 @@ class IcarusMemory:
         except Exception:
             # Wiki classification is advisory; the Entry write is the source of truth.
             return
+
+    def _write_promoted_session_summary(self, archived: ArchivedSession, summary: str) -> Entry:
+        entry = Entry(
+            id=self.store.generate_id(),
+            agent=archived.agent_id,
+            platform=self.platform,
+            timestamp=datetime.now(timezone.utc).replace(microsecond=0),
+            type="session_summary",
+            summary=summary[:200],
+            body=_session_summary_body(archived),
+            session_id=archived.session_id,
+            training_value="high",
+            evidence=[
+                EvidencePointer(
+                    kind="tool_output",
+                    ref=archived.ref,
+                    excerpt=archived.final_summary[:500],
+                )
+            ],
+            source_tool="session_archive",
+        )
+        validate_for_write(entry, self.store, is_initial_write=True)
+        return self.store.write(entry)
 
     @staticmethod
     def _validate_page_path_for_public(path: str) -> str:
