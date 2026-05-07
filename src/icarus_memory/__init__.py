@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from datetime import datetime, timezone
@@ -57,6 +58,7 @@ __version__ = "0.2.0"
 
 DEFAULT_ROOT_ENV = "ICARUS_FABRIC_ROOT"
 DEFAULT_ROOT = "~/fabric"
+logger = logging.getLogger(__name__)
 
 
 def _resolve_root(root: str | Path | None) -> Path:
@@ -81,11 +83,14 @@ class IcarusMemory:
         *,
         embedding_model: str = "BAAI/bge-small-en-v1.5",
         platform: str = "icarus-memory",
+        enable_wiki_classification: bool = False,
     ):
         self.root = _resolve_root(root)
         self.store = MarkdownStore(self.root)
         self.embedding_model = embedding_model
         self.platform = platform
+        self.enable_wiki_classification = enable_wiki_classification
+        self._wiki_classification_missing_key_warned = False
         self.wiki = WikiManager(self.root, memory=self)
         self.archive = SessionArchive(self.root)
         self.briefings = BriefingGenerator(
@@ -114,6 +119,7 @@ class IcarusMemory:
         source_tool: str | None = None,
         artifact_paths: list[str] | None = None,
         supersedes: list[str] | None = None,
+        classify: bool | None = None,
     ) -> Entry:
         validate_write_inputs(
             agent=agent,
@@ -166,7 +172,7 @@ class IcarusMemory:
         )
         validate_for_write(entry, self.store, is_initial_write=True)
         written = self.store.write(entry)
-        self._classify_wiki_after_write(written)
+        self._classify_wiki_after_write(written, classify=classify)
         return written
 
     def write_with_supersession(
@@ -465,8 +471,20 @@ class IcarusMemory:
         query = validate_query(query)
         return self.wiki.search_pages(query)
 
-    def _classify_wiki_after_write(self, entry: Entry) -> None:
+    def _classify_wiki_after_write(self, entry: Entry, *, classify: bool | None = None) -> None:
+        use_llm = self.enable_wiki_classification if classify is None else classify
         try:
+            if not use_llm:
+                self.wiki.add_entry("uncategorized", entry.id, page_type="uncategorized")
+                return
+            if not os.environ.get("OPENAI_API_KEY"):
+                if not self._wiki_classification_missing_key_warned:
+                    logger.warning(
+                        "OPENAI_API_KEY is not set; wiki classification is using uncategorized"
+                    )
+                    self._wiki_classification_missing_key_warned = True
+                self.wiki.add_entry("uncategorized", entry.id, page_type="uncategorized")
+                return
             self.wiki.classify_and_add(entry)
         except Exception:
             # Wiki classification is advisory; the Entry write is the source of truth.
