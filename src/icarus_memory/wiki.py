@@ -1,4 +1,9 @@
-"""Wiki pages layered over Entry records."""
+"""Shared wiki pages layered over Entry records.
+
+Wiki pages are intentionally global within one fabric root. They are used for
+promoted knowledge that should be visible across agents; private same-agent
+history belongs in the session archive instead.
+"""
 
 from __future__ import annotations
 
