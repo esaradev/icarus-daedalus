@@ -239,3 +239,121 @@ ul { list-style: none; }
   vertical-align: 2px;
   margin-right: 6px;
 }
+
+/* wiki list sections ---------------------------------------------- */
+
+.list-section { border-bottom: 1px solid var(--border); }
+.list-section[open] { padding-bottom: 4px; }
+.list-section-summary {
+  list-style: none;
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--size-detail);
+  color: var(--muted);
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+.list-section-summary::-webkit-details-marker { display: none; }
+.list-section-summary::before {
+  content: "▾ ";
+  color: var(--muted);
+}
+.list-section:not([open]) > .list-section-summary::before { content: "▸ "; }
+.list-section-summary:hover { color: var(--text); }
+
+/* wiki detail entry rows ------------------------------------------ */
+
+.entry-group-label {
+  margin: 4px 0 8px;
+  font-family: var(--font-mono);
+  font-size: var(--size-detail);
+  color: var(--muted);
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+
+.entry-row {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.entry-row:last-of-type { border-bottom: none; }
+.entry-row-head { font-size: var(--size-body); }
+.entry-row-meta {
+  margin-top: 4px;
+  font-size: var(--size-detail);
+}
+.entry-row .glyph { width: 1em; display: inline-block; text-align: center; }
+
+.footnote-ref {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--font-mono);
+}
+.footnote-ref sup { font-size: 10px; }
+.footnote-ref:hover { text-decoration: underline; }
+
+.superseded-toggle {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.superseded-summary {
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--size-detail);
+  color: var(--muted);
+}
+.superseded-summary::-webkit-details-marker { display: none; }
+.superseded-summary::before { content: "▸ "; color: var(--muted); }
+.superseded-toggle[open] > .superseded-summary::before { content: "▾ "; }
+.superseded-summary:hover { color: var(--text); }
+.superseded-toggle[open] { padding-bottom: 12px; }
+.superseded-toggle .entry-row { opacity: 0.7; }
+
+.footnotes-block {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: var(--size-detail);
+  color: var(--muted);
+}
+.footnotes-label {
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+.footnotes { padding-left: 1.4em; }
+.footnotes li {
+  font-family: var(--font-mono);
+  margin-bottom: 4px;
+  list-style: decimal;
+}
+
+/* form ------------------------------------------------------------- */
+
+.form { display: flex; flex-direction: column; gap: 14px; max-width: 60ch; }
+.form-row { display: flex; flex-direction: column; gap: 4px; }
+.form-row label {
+  font-family: var(--font-mono);
+  font-size: var(--size-detail);
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.form-row input,
+.form-row textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.form-row textarea { font-family: var(--font-mono); font-size: var(--size-detail); }
+.form-row input:focus,
+.form-row textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
