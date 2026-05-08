@@ -45,8 +45,9 @@ dev = [
 icarus-memory = "icarus_memory.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/esaradev/icarus-memory"
-Issues = "https://github.com/esaradev/icarus-memory/issues"
+Homepage = "https://github.com/esaradev/icarus-memory-infra"
+Issues = "https://github.com/esaradev/icarus-memory-infra/issues"
+Source = "https://github.com/esaradev/icarus-memory-infra"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/icarus_memory"]

@@ -82,7 +82,7 @@ MIT.
 
 ---
 
-- Documentation: [`docs/`](docs/)
+- Documentation: [github.com/esaradev/icarus-memory-infra/tree/main/docs](https://github.com/esaradev/icarus-memory-infra/tree/main/docs)
 - Discord: coming soon
 - X / Twitter: [@IcarusHermes](https://x.com/IcarusHermes)
 - Email: harry@icarushermes.com
