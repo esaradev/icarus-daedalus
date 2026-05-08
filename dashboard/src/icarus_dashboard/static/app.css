@@ -357,3 +357,42 @@ ul { list-style: none; }
   outline: none;
   border-color: var(--accent);
 }
+
+/* activity --------------------------------------------------------- */
+
+.list-meta-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.list-meta-row .action {
+  padding: 2px 8px;
+  font-size: var(--size-detail);
+}
+.list-meta-row .action.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.event-row .badge {
+  padding: 1px 6px;
+  margin-left: 0;
+}
+.event-row .title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.payload-block {
+  margin: 4px 0 16px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--size-detail);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

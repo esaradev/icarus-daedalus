@@ -6,7 +6,7 @@ from pathlib import Path
 
 from urllib.parse import quote
 
-from fasthtml.common import RedirectResponse, fast_app
+from fasthtml.common import EventStream, RedirectResponse, fast_app
 
 from .data.memory import get_memory
 from .views import activity, review, wiki
@@ -56,8 +56,18 @@ def wiki_page_route(path: str):
 
 
 @rt("/activity")
-def activity_route():
-    return activity.page()
+async def activity_route():
+    return await activity.page()
+
+
+@rt("/activity/event/{event_id}")
+async def activity_event_route(event_id: str):
+    return await activity.page(active_event_id=event_id)
+
+
+@rt("/activity/stream")
+async def activity_stream_route():
+    return EventStream(activity.stream())
 
 
 @rt("/review")

@@ -18,7 +18,10 @@ ROOT_ENV = "ICARUS_FABRIC_ROOT"
 
 
 def fabric_root() -> Path:
-    return Path(os.environ.get(ROOT_ENV) or DEFAULT_ROOT).expanduser()
+    raw = Path(os.environ.get(ROOT_ENV) or DEFAULT_ROOT).expanduser()
+    # Match the substrate's MarkdownStore which calls .resolve(); watchfiles
+    # also reports canonical paths, so unresolved roots break relative_to().
+    return raw.resolve() if raw.exists() else raw
 
 
 def fabric_exists() -> bool:
