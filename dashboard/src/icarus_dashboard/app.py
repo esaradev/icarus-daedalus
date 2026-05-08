@@ -73,3 +73,57 @@ async def activity_stream_route():
 @rt("/review")
 def review_route():
     return review.page()
+
+
+# More-specific issue routes registered before the generic detail route so the
+# /resolve, /dismiss, /supersede suffixes don't get swallowed by {issue_id}.
+@rt("/review/issue/{issue_id}/resolve", methods=["POST"])
+def review_resolve(issue_id: str):
+    from .data.review import find_issue, write_marker
+
+    memory = get_memory()
+    issue = find_issue(memory, issue_id)
+    if issue is not None:
+        write_marker(memory, issue, action="resolved")
+    return RedirectResponse("/review", status_code=303)
+
+
+@rt("/review/issue/{issue_id}/dismiss", methods=["POST"])
+def review_dismiss(issue_id: str):
+    from .data.review import find_issue, write_marker
+
+    memory = get_memory()
+    issue = find_issue(memory, issue_id)
+    if issue is not None:
+        write_marker(memory, issue, action="dismissed")
+    return RedirectResponse("/review", status_code=303)
+
+
+@rt("/review/issue/{issue_id}/supersede", methods=["GET"])
+def review_supersede_form(issue_id: str):
+    return review.supersede_form(issue_id)
+
+
+@rt("/review/issue/{issue_id}/supersede", methods=["POST"])
+def review_supersede_submit(
+    issue_id: str, agent: str, summary: str, body: str = ""
+):
+    from .data.review import find_issue
+
+    memory = get_memory()
+    issue = find_issue(memory, issue_id)
+    if issue is None or issue.target_kind != "entry":
+        return RedirectResponse("/review", status_code=303)
+    memory.write_with_supersession(
+        agent=agent,
+        type="decision",
+        summary=summary,
+        body=body,
+        supersedes_ids=[issue.target_id],
+    )
+    return RedirectResponse("/review", status_code=303)
+
+
+@rt("/review/issue/{issue_id}")
+def review_issue_route(issue_id: str):
+    return review.page(active_issue_id=issue_id)

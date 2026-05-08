@@ -396,3 +396,19 @@ ul { list-style: none; }
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* review queue ----------------------------------------------------- */
+
+.issue-row .glyph {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+}
+.glyph.severity-high { color: var(--text); font-weight: 500; }
+.glyph.severity-medium { color: var(--accent); }
+.glyph.severity-low { color: var(--muted); }
+
+.inline-form { display: inline; }
+.inline-form .action {
+  cursor: pointer;
+}
