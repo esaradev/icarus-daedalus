@@ -22,7 +22,7 @@ def _plan_dict(plan: RollbackPlan) -> dict[str, Any]:
 
 
 def _install_unknown_argument_guard(server: Any) -> None:
-    manager = getattr(server, "_tool_manager", None)
+    manager = getattr(server, "_tool_manager", None) or getattr(server, "tool_manager", None)
     if manager is None or not hasattr(manager, "call_tool"):
         return
 
@@ -35,7 +35,9 @@ def _install_unknown_argument_guard(server: Any) -> None:
             properties = params.get("properties", {}) if isinstance(params, dict) else {}
             allowed_by_tool[getattr(tool, "name", "")] = set(properties)
 
-    original_call_tool = manager.call_tool
+    original_call_tool = getattr(manager, "call_tool", None)
+    if original_call_tool is None:
+        return
 
     async def guarded_call_tool(
         name: str,
@@ -55,7 +57,10 @@ def _install_unknown_argument_guard(server: Any) -> None:
             convert_result=convert_result,
         )
 
-    manager.call_tool = guarded_call_tool
+    try:
+        manager.call_tool = guarded_call_tool
+    except Exception:
+        return
 
 
 def build_server(root: str | Path | None = None, *, port: int = 8000) -> Any:

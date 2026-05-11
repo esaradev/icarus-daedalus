@@ -22,6 +22,7 @@ from ._layers import (
     yaml_frontmatter,
 )
 from .exceptions import StoreError, ValidationError
+from .locking import FileLock
 from .retrieval import RecallMode
 from .schema import Entry, RecallHit
 
@@ -67,6 +68,7 @@ class WikiManager:
         self.wiki_root = self.root / ".icarus" / "wiki"
         self.memory = memory
         self.wiki_root.mkdir(parents=True, exist_ok=True)
+        self._lock = FileLock(self.root / ".icarus" / "wiki.lock")
 
     def get_page(self, path: str) -> WikiPage | None:
         safe = safe_page_path(path)
@@ -82,39 +84,52 @@ class WikiManager:
     def ensure_page(
         self, path: str, *, title: str | None = None, page_type: PageType = "topic"
     ) -> WikiPage:
-        safe = safe_page_path(path)
-        existing = self.get_page(safe)
-        if existing is not None:
-            return existing
-        now = _utcnow()
-        page = WikiPage(
-            path=safe,
-            title=title or _title_from_path(safe),
-            page_type=page_type,
-            created_at=now,
-            updated_at=now,
-        )
-        self.write_page(page)
-        return page
+        with self._lock:
+            safe = safe_page_path(path)
+            existing = self.get_page(safe)
+            if existing is not None:
+                return existing
+            now = _utcnow()
+            page = WikiPage(
+                path=safe,
+                title=title or _title_from_path(safe),
+                page_type=page_type,
+                created_at=now,
+                updated_at=now,
+            )
+            self.write_page(page)
+            return page
 
     def write_page(self, page: WikiPage) -> WikiPage:
-        safe = safe_page_path(page.path)
-        page.path = safe
-        page.updated_at = _utcnow()
-        page.body = self._render_body(page.entries)
-        front = page.model_dump(mode="json", exclude={"body"})
-        atomic_write_text(self._file_for(safe), yaml_frontmatter(front, page.body))
-        return page
+        with self._lock:
+            safe = safe_page_path(page.path)
+            page.path = safe
+            page.updated_at = _utcnow()
+            page.body = self._render_body(page.entries)
+            front = page.model_dump(mode="json", exclude={"body"})
+            atomic_write_text(self._file_for(safe), yaml_frontmatter(front, page.body))
+            return page
 
     def add_entry(self, path: str, entry_id: str, *, page_type: PageType = "topic") -> WikiPage:
-        page = self.ensure_page(path, page_type=page_type)
-        if entry_id not in page.entries:
-            page.entries.append(entry_id)
-        return self.write_page(page)
+        with self._lock:
+            page = self.ensure_page(path, page_type=page_type)
+            if entry_id not in page.entries:
+                page.entries.append(entry_id)
+            return self.write_page(page)
 
     def classify_and_add(self, entry: Entry) -> WikiPage:
         page_path, page_type = self._classify_entry(entry)
         return self.add_entry(page_path, entry.id, page_type=page_type)
+
+    def pages_containing(self, entry_id: str) -> list[str]:
+        return [page.path for page in self.iter_pages() if entry_id in page.entries]
+
+    def refresh_entry(self, entry_id: str) -> None:
+        """Rewrite any wiki pages that reference entry_id so status/evidence stay fresh."""
+        with self._lock:
+            for page in self.iter_pages():
+                if entry_id in page.entries:
+                    self.write_page(page)
 
     def search_pages(self, query: str) -> list[WikiPage]:
         if self.memory is None:

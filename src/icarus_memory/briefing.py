@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
@@ -108,7 +109,10 @@ class BriefingGenerator:
             failed=failed,
             superseded=superseded,
         )
-        if _estimate_cost_usd(prompt) <= MAX_LLM_COST_USD:
+        if (
+            os.environ.get("ICARUS_ENABLE_LLM_BRIEFINGS") == "1"
+            and _estimate_cost_usd(prompt) <= MAX_LLM_COST_USD
+        ):
             result = call_openai_json(prompt, max_tokens=350)
             if result is not None and isinstance(result.get("content"), str):
                 return Briefing(
@@ -155,13 +159,13 @@ class BriefingGenerator:
     def _recent_superseded(self) -> list[Entry]:
         cutoff = _utcnow() - RECENT_SUPERSEDED_WINDOW
         store = self.memory.store
-        entries = store.iter_entries()
-        return [
-            entry
-            for entry in entries
-            if entry.lifecycle == "superseded"
-            and self._supersession_time(entry).astimezone(timezone.utc) >= cutoff
-        ][:10]
+        out: list[Entry] = []
+        for entry in store.iter_entries_filtered(lifecycle_in={"superseded"}):
+            if self._supersession_time(entry).astimezone(timezone.utc) >= cutoff:
+                out.append(entry)
+            if len(out) >= 10:
+                break
+        return out
 
     def _supersession_time(self, entry: Entry) -> datetime:
         if entry.superseded_by is None:

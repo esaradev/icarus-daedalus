@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
 from .briefing import Briefing, BriefingGenerator
+from .evidence import verify_entry_evidence
 from .exceptions import (
     EntryNotFound,
+    EvidenceIntegrityError,
     IcarusMemoryError,
     IllegalStateTransition,
     RollbackError,
@@ -241,12 +244,20 @@ class IcarusMemory:
             old.lifecycle = "superseded"
             old.superseded_by = new_entry.id
             validate_for_write(old, self.store, is_initial_write=False)
-            self.store.write(old)
+            written_old = self.store.write(old)
+            self.wiki.refresh_entry(written_old.id)
 
+        self.wiki.refresh_entry(new_entry.id)
         return new_entry
 
-    def get(self, entry_id: str) -> Entry:
-        return self.store.get(validate_entry_id(entry_id))
+    def get(self, entry_id: str, *, verify_evidence: bool = False) -> Entry:
+        entry = self.store.get(validate_entry_id(entry_id))
+        if verify_evidence:
+            try:
+                verify_entry_evidence(entry, root=self.root)
+            except ValueError as exc:
+                raise EvidenceIntegrityError(str(exc)) from exc
+        return entry
 
     # -- Recall / search ------------------------------------------------
 
@@ -263,6 +274,7 @@ class IcarusMemory:
         project_id: str | None = None,
         type: str | None = None,
         include_superseded: bool = False,
+        verify_evidence: bool = False,
     ) -> list[RecallHit]:
         query = validate_query(query)
         k = validate_k(k)
@@ -274,7 +286,7 @@ class IcarusMemory:
         agent = validate_optional_string(agent, "agent")
         project_id = validate_optional_string(project_id, "project_id")
         type = validate_optional_string(type, "type")
-        return _recall(
+        hits = _recall(
             self.store,
             query,
             k=k,
@@ -288,6 +300,16 @@ class IcarusMemory:
             type=type,
             embedding_model=self.embedding_model,
         )
+        if not verify_evidence:
+            return hits
+        out: list[RecallHit] = []
+        for hit in hits:
+            try:
+                verify_entry_evidence(hit.entry, root=self.root)
+            except ValueError:
+                continue
+            out.append(hit)
+        return out
 
     def search(
         self,
@@ -298,6 +320,7 @@ class IcarusMemory:
         project_id: str | None = None,
         type: str | None = None,
         include_superseded: bool = False,
+        verify_evidence: bool = False,
     ) -> list[Entry]:
         query = validate_query(query)
         status_filter = cast(StatusFilter, validate_status_filter(status_filter))
@@ -305,7 +328,7 @@ class IcarusMemory:
         agent = validate_optional_string(agent, "agent")
         project_id = validate_optional_string(project_id, "project_id")
         type = validate_optional_string(type, "type")
-        return _search(
+        entries = _search(
             self.store,
             query,
             status_filter=status_filter,
@@ -314,6 +337,16 @@ class IcarusMemory:
             project_id=project_id,
             type=type,
         )
+        if not verify_evidence:
+            return entries
+        out: list[Entry] = []
+        for entry in entries:
+            try:
+                verify_entry_evidence(entry, root=self.root)
+            except ValueError:
+                continue
+            out.append(entry)
+        return out
 
     def audit_search(
         self,
@@ -351,7 +384,9 @@ class IcarusMemory:
                 verifier=verifier, timestamp=now, status="verified", note=note
             )
         )
-        return self.store.write(entry)
+        written = self.store.write(entry)
+        self.wiki.refresh_entry(written.id)
+        return written
 
     def contradict(self, entry_id: str, *, contradicted_by: str, reason: str) -> Entry:
         entry_id = validate_entry_id(entry_id)
@@ -377,7 +412,9 @@ class IcarusMemory:
             )
         )
         validate_for_write(entry, self.store, is_initial_write=False)
-        return self.store.write(entry)
+        written = self.store.write(entry)
+        self.wiki.refresh_entry(written.id)
+        return written
 
     # -- Rollback / lineage --------------------------------------------
 
@@ -390,7 +427,12 @@ class IcarusMemory:
             return plan
         if plan.error:
             raise RollbackError(plan.error)
-        return apply_rollback(self.store, plan, cascade=cascade)
+        applied = apply_rollback(self.store, plan, cascade=cascade)
+        for eid in [*applied.intermediate, *applied.tainted_descendants]:
+            self.wiki.refresh_entry(eid)
+        if applied.rollback_entry_id:
+            self.wiki.refresh_entry(applied.rollback_entry_id)
+        return applied
 
     def lineage(self, entry_id: str) -> list[Entry]:
         return _lineage(self.store, validate_entry_id(entry_id))
@@ -458,6 +500,9 @@ class IcarusMemory:
     def _classify_wiki_after_write(self, entry: Entry, *, classify: bool | None = None) -> None:
         use_llm = self.enable_wiki_classification if classify is None else classify
         try:
+            # If the entry was explicitly promoted/added already, don't auto-add elsewhere.
+            if self.wiki.pages_containing(entry.id):
+                return
             if not use_llm:
                 self.wiki.add_entry("uncategorized", entry.id, page_type="uncategorized")
                 return
@@ -469,7 +514,11 @@ class IcarusMemory:
                     self._wiki_classification_missing_key_warned = True
                 self.wiki.add_entry("uncategorized", entry.id, page_type="uncategorized")
                 return
-            self.wiki.classify_and_add(entry)
+            if classify is True:
+                # Caller explicitly requested classification; keep deterministic/synchronous.
+                self.wiki.classify_and_add(entry)
+                return
+            threading.Thread(target=self.wiki.classify_and_add, args=(entry,), daemon=True).start()
         except Exception:
             # Wiki classification is advisory; the Entry write is the source of truth.
             return
@@ -522,6 +571,7 @@ __all__ = [
     "Briefing",
     "Entry",
     "EntryNotFound",
+    "EvidenceIntegrityError",
     "EvidencePointer",
     "IcarusMemory",
     "IcarusMemoryError",
