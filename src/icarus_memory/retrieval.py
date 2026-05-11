@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from .schema import Entry, RecallHit, VerifiedStatus
 from .store import MarkdownStore
@@ -147,9 +147,27 @@ def recall(
     embedding_model: str = "BAAI/bge-small-en-v1.5",
 ) -> list[RecallHit]:
     """Ranked recall with verified-status and lifecycle filtering."""
+    verified_in: set[str] | None = None
+    if status_filter == "safe":
+        verified_in = {"unverified", "verified"}
+    elif status_filter == "verified_only":
+        verified_in = {"verified"}
+    if exclude_rolled_back and verified_in is not None:
+        verified_in.discard("rolled_back")
+
+    exclude_lifecycle: set[str] | None = None
+    if not include_superseded:
+        exclude_lifecycle = {"superseded"}
+
     candidates = [
         e
-        for e in store.iter_entries()
+        for e in store.iter_entries_filtered(
+            agent=agent,
+            project_id=project_id,
+            type=type,
+            verified_in=verified_in,
+            exclude_lifecycle=exclude_lifecycle,
+        )
         if _matches_filters(
             e,
             status_filter=status_filter,
@@ -237,22 +255,32 @@ def _hybrid_rank(  # pragma: no cover - requires the optional [embeddings] extra
     }
 
     texts = [f"{e.summary}\n\n{e.body}" for e in candidates]
-    doc_vecs = []
-    for entry, text in zip(candidates, texts, strict=True):
-        path = store._find_path(entry.id)
+    doc_vecs: list[object | None] = [None] * len(candidates)
+    uncached_texts: list[str] = []
+    uncached_meta: list[tuple[int, Any, str, Any | None]] = []
+
+    for idx, (entry, text) in enumerate(zip(candidates, texts, strict=True)):
+        path = store.path_for_id(entry.id)
         cache_file = emb.cache_path(store.root, model_name, entry.id)
         key = emb.cache_key(model_name, path) if path else ""
         cached = emb.load_cached(cache_file, key) if path else None
-        if cached is None:
-            vec = emb.embed(model_name, [text])[0]
+        if cached is not None:
+            doc_vecs[idx] = cached
+            continue
+        uncached_texts.append(text)
+        uncached_meta.append((idx, cache_file, key, path))
+
+    if uncached_texts:
+        new_vecs = emb.embed(model_name, uncached_texts)
+        for (idx, cache_file, key, path), vec in zip(uncached_meta, new_vecs, strict=True):
+            doc_vecs[idx] = vec
             if path:
                 emb.save_cached(cache_file, key, vec)
-        else:
-            vec = cached
-        doc_vecs.append(vec)
 
     import numpy as np
 
+    if any(v is None for v in doc_vecs):
+        raise RuntimeError("internal error: missing document vectors")
     doc_matrix = np.stack(doc_vecs)
     query_vec = emb.embed(model_name, [query])[0]
     order, _scores = emb.cosine_rank(query_vec, doc_matrix)

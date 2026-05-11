@@ -42,3 +42,7 @@ class IllegalStateTransition(ValidationError):
 
 class RollbackError(IcarusMemoryError):
     """Raised when a rollback cannot be planned or applied."""
+
+
+class EvidenceIntegrityError(IcarusMemoryError):
+    """Raised when evidence hash verification fails."""

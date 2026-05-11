@@ -85,12 +85,27 @@ class WorkingMemory(BaseModel):
         root: str | Path,
         *,
         session_id: str,
+        agent_id: str | None = None,
         persist: bool = True,
     ) -> WorkingMemory | None:
         root_path = Path(root).expanduser().resolve()
         safe_session = safe_id(session_id, "session_id")
-        path = root_path / ".icarus" / "sessions" / f"{safe_session}.json"
-        if not path.exists():
+        sessions_root = root_path / ".icarus" / "sessions"
+        path: Path | None = None
+        if agent_id is not None:
+            safe_agent = safe_id(agent_id, "agent_id")
+            scoped = sessions_root / safe_agent / f"{safe_session}.json"
+            legacy = sessions_root / f"{safe_session}.json"
+            path = scoped if scoped.exists() else (legacy if legacy.exists() else None)
+        else:
+            legacy = sessions_root / f"{safe_session}.json"
+            if legacy.exists():
+                path = legacy
+            else:
+                matches = list((sessions_root).glob(f"*/{safe_session}.json"))
+                if len(matches) == 1:
+                    path = matches[0]
+        if path is None or not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
         wm = cls.model_validate(data)
@@ -149,9 +164,9 @@ class WorkingMemory(BaseModel):
         return _truncate_tokens("\n".join(lines).strip() + "\n", max_tokens)
 
     def end(self) -> None:
-        path = self._path()
-        if path is not None:
-            path.unlink(missing_ok=True)
+        for path in [self._legacy_path(), self._scoped_path()]:
+            if path is not None:
+                path.unlink(missing_ok=True)
 
     def _drop_expired(self) -> None:
         cutoff = _utcnow() - WORKING_TTL
@@ -160,14 +175,25 @@ class WorkingMemory(BaseModel):
         self.hypotheses = [item for item in self.hypotheses if item.updated_at >= cutoff]
 
     def _persist(self) -> None:
-        path = self._path()
-        if path is not None:
-            atomic_write_json(path, self.model_dump(mode="json"))
+        for path in [self._legacy_path(), self._scoped_path()]:
+            if path is not None:
+                atomic_write_json(path, self.model_dump(mode="json"))
 
-    def _path(self) -> Path | None:
+    def _legacy_path(self) -> Path | None:
         if self.root is None or not self.persist:
             return None
         return self.root / ".icarus" / "sessions" / f"{self.session_id}.json"
+
+    def _scoped_path(self) -> Path | None:
+        if self.root is None or not self.persist:
+            return None
+        return (
+            self.root
+            / ".icarus"
+            / "sessions"
+            / safe_id(self.agent_id, "agent_id")
+            / f"{self.session_id}.json"
+        )
 
 
 def _truncate_tokens(text: str, max_tokens: int) -> str:

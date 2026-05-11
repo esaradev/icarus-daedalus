@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+from collections import OrderedDict
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any
 import yaml
 
 from .exceptions import EntryNotFound, StoreError
+from .index import SqliteIndex
+from .locking import FileLock
 from .schema import Entry
 
 logger = logging.getLogger(__name__)
@@ -66,6 +69,10 @@ class MarkdownStore:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self._reverse_revises_cache: dict[str, list[str]] | None = None
+        self._index = SqliteIndex(self.root)
+        self._write_lock = FileLock(self.root / ".icarus" / "store.lock")
+        self._entry_cache: OrderedDict[Path, tuple[int, int, Entry]] = OrderedDict()
+        self._cache_max = 2048
 
     # -- ID generation --------------------------------------------------
 
@@ -90,11 +97,10 @@ class MarkdownStore:
         )
 
     def _find_path(self, entry_id: str) -> Path | None:
-        filename = _filename_from_id(entry_id)
-        for match in self.root.rglob(filename):
-            if match.is_file():
-                return match
-        return None
+        return self._index.find_path(entry_id, filename_fallback_root=self.root)
+
+    def path_for_id(self, entry_id: str) -> Path | None:
+        return self._find_path(entry_id)
 
     # -- CRUD -----------------------------------------------------------
 
@@ -111,24 +117,58 @@ class MarkdownStore:
         path = self._path_for(entry)
         path.parent.mkdir(parents=True, exist_ok=True)
         text = self._serialize(entry)
-        self._atomic_write(path, text)
+        with self._write_lock:
+            self._atomic_write(path, text)
+            self._index.upsert_entry(
+                entry.id,
+                path,
+                {
+                    "timestamp": entry.timestamp.isoformat(),
+                    "agent": entry.agent,
+                    "project_id": entry.project_id,
+                    "type": entry.type,
+                    "verified": entry.verified,
+                    "lifecycle": entry.lifecycle,
+                    "status": entry.status,
+                    "assigned_to": entry.assigned_to,
+                },
+            )
+            self._cache_put(path, entry)
         self._reverse_revises_cache = None
         return entry
 
     def iter_entries(self) -> Iterator[Entry]:
-        for path in sorted(self.root.rglob("icarus-*.md")):
+        for path in self._index.iter_paths():
+            try:
+                yield self._read(path)
+            except StoreError as exc:
+                logger.warning("skipping unreadable entry at %s: %s", path, exc)
+
+    def iter_entries_filtered(
+        self,
+        *,
+        agent: str | None = None,
+        project_id: str | None = None,
+        type: str | None = None,
+        verified_in: set[str] | None = None,
+        lifecycle_in: set[str] | None = None,
+        exclude_lifecycle: set[str] | None = None,
+    ) -> Iterator[Entry]:
+        for path in self._index.iter_paths(
+            agent=agent,
+            project_id=project_id,
+            type=type,
+            verified_in=verified_in,
+            lifecycle_in=lifecycle_in,
+            exclude_lifecycle=exclude_lifecycle,
+        ):
             try:
                 yield self._read(path)
             except StoreError as exc:
                 logger.warning("skipping unreadable entry at %s: %s", path, exc)
 
     def list_ids(self) -> list[str]:
-        ids: list[str] = []
-        for path in self.root.rglob("icarus-*.md"):
-            entry_id = _id_from_filename(path.name)
-            if entry_id is not None:
-                ids.append(entry_id)
-        return ids
+        return self._index.list_ids()
 
     # -- Serialization --------------------------------------------------
 
@@ -153,6 +193,14 @@ class MarkdownStore:
         return f"---\n{front}\n---\n{body}"
 
     def _read(self, path: Path) -> Entry:
+        stat = path.stat()
+        cached = self._entry_cache.get(path)
+        if cached is not None:
+            mtime_ns, size, entry = cached
+            if mtime_ns == stat.st_mtime_ns and size == stat.st_size:
+                self._entry_cache.move_to_end(path)
+                return entry.model_copy(deep=True)
+
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -188,9 +236,22 @@ class MarkdownStore:
         data["body"] = body
 
         try:
-            return Entry.model_validate(data)
+            entry = Entry.model_validate(data)
         except Exception as exc:
             raise StoreError(f"invalid entry in {path}: {exc}") from exc
+
+        self._cache_put(path, entry)
+        return entry.model_copy(deep=True)
+
+    def _cache_put(self, path: Path, entry: Entry) -> None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return
+        self._entry_cache[path] = (int(stat.st_mtime_ns), int(stat.st_size), entry.model_copy(deep=True))
+        self._entry_cache.move_to_end(path)
+        while len(self._entry_cache) > self._cache_max:
+            self._entry_cache.popitem(last=False)
 
     # -- Atomic write helper -------------------------------------------
 
